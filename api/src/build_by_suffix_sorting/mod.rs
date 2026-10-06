@@ -123,21 +123,22 @@ pub mod preprocessing;
 pub mod input_structures;
 pub mod stream;
 
-use stream::StreamBuilder;
-use input_structures::{Bwt, Lcp, CHAR_TO_INDEX};
 use crate::atomic_bitmap::AtomicBitmap;
-use crate::build_by_suffix_sorting::stream::{MemoryStream, DiskStream};
+use crate::build_by_suffix_sorting::stream::{DiskStream, MemoryStream};
 use crate::vodbg::count::{Counts, Sample};
 use crate::{LcsArray, SbwtIndex, SubsetSeq};
+use input_structures::{Bwt, Lcp, CHAR_TO_INDEX};
+use stream::StreamBuilder;
 
-use std::sync::{Arc, Mutex, atomic::AtomicUsize};
+use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
-use bitvec::vec::BitVec;
+use crate::precalc::PrefixLookupTable;
 use bitvec::field::BitField;
-use simple_sds_sbwt::{bit_vector::BitVector, int_vector::IntVector};
+use bitvec::vec::BitVec;
 use simple_sds_sbwt::ops::{BitVec as BitVecTrait, Rank, Select};
 use simple_sds_sbwt::raw_vector::{AccessRaw, RawVector};
 use simple_sds_sbwt::serialize::Serialize;
+use simple_sds_sbwt::{bit_vector::BitVector, int_vector::IntVector};
 
 type Word = wide::u8x16;
 const LANES: usize = Word::LANES as usize;
@@ -684,10 +685,10 @@ pub(crate) fn collect_output<SS: SubsetSeq + Send>(
         n_kmers,
         k,
         C,
-        crate::PrefixLookupTable::new_empty(n_sets)
+        crate::precalc::VectorLookupTable::new_empty(n_sets)
     );
     // TODO: add a parameter for prefix_length?
-    let prefix_lookup_table = crate::PrefixLookupTable::new(&index, 8);
+    let prefix_lookup_table = crate::precalc::VectorLookupTable::new(&index, 8);
     index.set_lookup_table(prefix_lookup_table);
     let lcs = lcs.map(LcsArray::new);
 
@@ -2138,9 +2139,9 @@ mod tests {
     }
 
     fn randomised_kmers(bounded: bool, stream_suffix_array_from_disk: bool) {
-        use rand_chacha::ChaCha20Rng;
-        use rand_chacha::rand_core::SeedableRng;
         use rand_chacha::rand_core::RngCore;
+        use rand_chacha::rand_core::SeedableRng;
+        use rand_chacha::ChaCha20Rng;
 
         let k: usize = 17;
         let kmer_length: usize = 48;

@@ -2,9 +2,10 @@
 
 use std::io::Write;
 
-use crate::{LcsArray, PrefixLookupTable, SbwtIndex, StreamingIndex, SubsetCorrectionSets, SubsetMatrix, SubsetSeq, compact_int_vector::CompactIntVector, dbg::Dbg};
+use crate::precalc::{PrefixLookupTable, VectorLookupTable};
+use crate::{compact_int_vector::CompactIntVector, dbg::Dbg, LcsArray, SbwtIndex, StreamingIndex, SubsetCorrectionSets, SubsetMatrix, SubsetSeq};
 
-/// An enum listing SbwtIndex types built on different subset rank implementations provided in this crate. 
+/// An enum listing SbwtIndex types built on different subset rank implementations provided in this crate.
 pub enum SbwtIndexVariant {
     SubsetMatrix(SbwtIndex<SubsetMatrix>),
     SubsetCorrectionSets(SbwtIndex<SubsetCorrectionSets>),
@@ -72,10 +73,10 @@ impl SbwtIndexVariant {
     pub fn reconstruct_padded_spectrum(&self, n_threads: usize) -> Vec<u8> { forward!(self, reconstruct_padded_spectrum(n_threads)) }
 
     /// See [SbwtIndex::set_lookup_table].
-    pub fn set_lookup_table(&mut self, prefix_lookup_table: PrefixLookupTable) { forward!(self, set_lookup_table(prefix_lookup_table)) }
+    pub fn set_lookup_table(&mut self, prefix_lookup_table: VectorLookupTable) { forward!(self, set_lookup_table(prefix_lookup_table)) }
 
     /// See [SbwtIndex::get_lookup_table].
-    pub fn get_lookup_table(&self) -> &PrefixLookupTable { forward!(self, get_lookup_table()) }
+    pub fn get_lookup_table(&self) -> &VectorLookupTable { forward!(self, get_lookup_table()) }
 
     /// Returns the number of sets in the range `[0, i)` that have character `c`. See [SubsetSeq::rank].
     pub fn rank(&self, c: u8, i: usize) -> usize {
@@ -108,10 +109,10 @@ impl SbwtIndexVariant {
         }
     }
 
-    pub fn build_lookup_table(&self, prefix_len: usize) -> PrefixLookupTable {
+    pub fn build_lookup_table(&self, prefix_len: usize) -> VectorLookupTable {
         match self {
-            SbwtIndexVariant::SubsetMatrix(sbwt_index) => PrefixLookupTable::new(sbwt_index, prefix_len),
-            SbwtIndexVariant::SubsetCorrectionSets(sbwt_index) => PrefixLookupTable::new(sbwt_index, prefix_len),
+            SbwtIndexVariant::SubsetMatrix(sbwt_index) => VectorLookupTable::new(sbwt_index, prefix_len),
+            SbwtIndexVariant::SubsetCorrectionSets(sbwt_index) => VectorLookupTable::new(sbwt_index, prefix_len),
         }
     }
 

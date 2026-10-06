@@ -3,11 +3,12 @@
 use std::path::Path;
 use std::str::FromStr;
 
-use crate::tempfile::TempFileManager;
-use crate::{subsetseq::SubsetMatrix, SeqStream};
-use crate::sbwt::{PrefixLookupTable, SbwtIndex};
+use crate::precalc::{PrefixLookupTable, VectorLookupTable};
+use crate::sbwt::SbwtIndex;
 use crate::streaming_index::LcsArray;
+use crate::tempfile::TempFileManager;
 use crate::util::SeqStreamWithPossiblyRevComp;
+use crate::{subsetseq::SubsetMatrix, SeqStream};
 /// A construction algorithm based on sorting of bit-packed k-mers using temporary disk space.
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct BitPackedKmerSortingDisk<SS: SeqStream + Send> {
@@ -135,7 +136,7 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingDisk<SS> {
         }
 
         if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
+            let lut = VectorLookupTable::new(&sbwt, self.precalc_length);
             sbwt.set_lookup_table(lut);
         }
 
@@ -295,7 +296,7 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingMem<SS> {
         }
 
         if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
+            let lut = VectorLookupTable::new(&sbwt, self.precalc_length);
             sbwt.set_lookup_table(lut);
         }
 
@@ -484,7 +485,7 @@ impl<SS: SeqStream + Send> BuildByBoundedSuffixSort<SS> {
         }
 
         if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
+            let lut = VectorLookupTable::new(&sbwt, self.precalc_length);
             sbwt.set_lookup_table(lut);
         }
 
@@ -653,7 +654,7 @@ impl<SS: SeqStream + Send> BuildByLibsais<SS> {
         }
 
         if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
+            let lut = VectorLookupTable::new(&sbwt, self.precalc_length);
             sbwt.set_lookup_table(lut);
         }
 

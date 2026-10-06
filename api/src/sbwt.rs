@@ -1,19 +1,21 @@
 //! The [SbwtIndex] data structure. Construct with [BitPackedKmerSortingMem](crate::BitPackedKmerSortingMem)
 //! or [BitPackedKmerSortingDisk](crate::BitPackedKmerSortingDisk).
 
+use byteorder::ReadBytesExt;
+use std::fmt::Debug;
 use std::io::Read;
 use std::io::Write;
-use byteorder::ReadBytesExt;
 
+use bitvec::prelude::*;
 use byteorder::LittleEndian;
 use num::traits::ToBytes;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use bitvec::prelude::*;
 
 use crate::compact_int_vector::CompactIntVector;
 use crate::compact_int_vector::CompactIntVectorMutSlice;
+use crate::precalc::{PrefixLookupTable, VectorLookupTable};
 use crate::sdsl_compatibility::load_known_width_sdsl_int_vector;
 use crate::sdsl_compatibility::load_sdsl_bit_vector;
 use crate::subsetseq::*;
@@ -92,7 +94,7 @@ pub struct SbwtIndex<SS: SubsetSeq> {
     n_kmers: usize,
     k: usize,
     C: Vec<usize>, // Cumulative character counts (includes one ghost dollar)
-    prefix_lookup_table: PrefixLookupTable,
+    prefix_lookup_table: VectorLookupTable,
 }
 
 
@@ -213,7 +215,7 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
         let mut subset_rank = SubsetMatrix::new_from_bit_vectors(vec![A_bits, C_bits, G_bits, T_bits]);
         subset_rank.build_rank();
 
-        let prefix_lut = PrefixLookupTable{ranges, prefix_length: precalc_k};
+        let prefix_lut = VectorLookupTable {ranges, prefix_length: precalc_k};
 
         Ok(SbwtIndex::from_parts(subset_rank, n_kmers, k, C_array, prefix_lut))
 
@@ -333,7 +335,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
             })
             .collect::<Vec<usize>>();
 
-        let prefix_lookup_table = PrefixLookupTable::load(input)?;
+        let prefix_lookup_table = VectorLookupTable::load(input)?;
 
         let index = Self {
             sbwt: subset_rank,
@@ -504,12 +506,12 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
     }
 
     /// Set the prefix lookup table of the data structure.
-    pub fn set_lookup_table(&mut self, prefix_lookup_table: PrefixLookupTable){
+    pub fn set_lookup_table(&mut self, prefix_lookup_table: VectorLookupTable){
         self.prefix_lookup_table = prefix_lookup_table;
     }
 
     /// Get the prefix lookup table of the data structure.
-    pub fn get_lookup_table(&self) -> &PrefixLookupTable {
+    pub fn get_lookup_table(&self) -> &VectorLookupTable {
         &self.prefix_lookup_table
     }
 
@@ -520,12 +522,12 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
 
     /// Internal function: construct from parts.
     #[allow(non_snake_case)]
-    pub fn from_parts(subset_rank: SS, n_kmers: usize, k: usize, C: Vec<usize>, prefix_lookup_table: PrefixLookupTable) -> Self {
+    pub fn from_parts(subset_rank: SS, n_kmers: usize, k: usize, C: Vec<usize>, prefix_lookup_table: VectorLookupTable) -> Self {
         Self {sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table}
     }
 
     // Returns the subset rank structure, the number of k-mers, k, the C-array and the prefix lookup table
-    pub fn into_parts(self) -> (SS, usize, usize, Vec<usize>, PrefixLookupTable) {
+    pub fn into_parts(self) -> (SS, usize, usize, Vec<usize>, VectorLookupTable) {
         (self.sbwt, self.n_kmers, self.k, self.C, self.prefix_lookup_table)
     }
 
@@ -538,8 +540,8 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         }
         let C = subset_rank.get_C_array();
         let n = subset_rank.len();
-        let mut index = Self{sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table: PrefixLookupTable::new_empty(n)};
-        index.prefix_lookup_table = PrefixLookupTable::new(&index, precalc_prefix_length);
+        let mut index = Self{sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table: VectorLookupTable::new_empty(n)};
+        index.prefix_lookup_table = VectorLookupTable::new(&index, precalc_prefix_length);
 
         index
     }
@@ -817,101 +819,11 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
 }
 
 
-/// A table storing the SBWT intervals of all 4^p possible p-mers.
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct PrefixLookupTable {
-    /// ranges\[i\] is the interval of the p-mer with colexicographic rank
-    /// i in the sorted list of all possible p-mers.
-    /// If the p-mer does not exist in the SBWT, the range is [0..0).
-    pub ranges: Vec<std::ops::Range<usize>>,
-
-    /// Prefix length p.
-    pub prefix_length: usize, 
-}
-
-impl PrefixLookupTable {
-
-    /// Create a new prefix lookup table containing only the interval of the
-    /// empty string.
-    #[allow(clippy::single_range_in_vec_init)] // Clippy false positive. It's actually intended like this
-    pub fn new_empty(n_sets_in_sbwt: usize) -> PrefixLookupTable {
-        Self{ranges: vec![0..n_sets_in_sbwt], prefix_length: 0}
-    }
-
-    /// Create a new prefix lookup table by searching all DNA strings of length `prefix_length`
-    /// in the given sbwt.
-    pub fn new<SS: SubsetSeq>(sbwt: &SbwtIndex<SS>, prefix_length: usize) -> PrefixLookupTable {
-        let mut pmer = vec![0u8; prefix_length];
-        let mut ranges = vec![0..0; num::pow(4_usize, prefix_length)];
-        for x in 0..num::pow(4, prefix_length) as u64{
-            pmer.clear();
-
-            // Construct the p-mer string
-            for i in 0..prefix_length {
-                let char_idx = (x >> (2*(prefix_length - 1 - i))) & 0x3;
-                let c = DNA_ALPHABET[char_idx as usize];
-                pmer.push(c);
-            }
-
-            if let Some(range) = sbwt.search(&pmer) {
-                ranges[x as usize] = range;
-            } // Else left as 0..0
-        }
-        PrefixLookupTable{ranges, prefix_length}
-    }
-
-    /// Look up the colex interval of the prefix. 
-    pub fn lookup(&self, prefix: &[u8]) -> std::ops::Range<usize> {
-        assert!(prefix.len() == self.prefix_length);
-        let mut table_idx = 0_usize;
-        for (i, c) in prefix.iter().rev().enumerate() {
-            let char_idx = ACGT_TO_0123[*c as usize];
-            if char_idx == 255 {
-                return 0..0; // Not a DNA character
-            }
-            table_idx |= ((char_idx as u64) << (2*i)) as usize;
-        }
-        self.ranges[table_idx].clone()
-    }
-
-    /// Write the lookup table to the given writer.
-    /// The lookup table can be then later loaded with [PrefixLookupTable::load].
-    /// Returns number of bytes written. 
-    pub fn serialize<W: Write>(&self, out: &mut W) -> std::io::Result<usize> {
-        let mut n_written = 0_usize;
-        n_written += util::write_bytes(out, &(self.prefix_length as u64).to_le_bytes())?;
-        n_written += util::write_bytes(out, &(self.ranges.len() as u64).to_le_bytes())?;
-        for range in self.ranges.iter(){
-            n_written += util::write_bytes(out, &(range.start as u64).to_le_bytes())?;
-            n_written += util::write_bytes(out, &(range.end as u64).to_le_bytes())?;
-        }
-        Ok(n_written)
-    }
-
-    /// Loads a a prefix lookup table that was previosly serialized with [PrefixLookupTable::serialize].
-    pub fn load<R: Read>(input: &mut R) -> std::io::Result<Self> {
-
-        let prefix_length = byteorder::ReadBytesExt::read_u64::<LittleEndian>(input).unwrap() as usize;
-        let ranges_len = byteorder::ReadBytesExt::read_u64::<LittleEndian>(input).unwrap() as usize;
-
-        let mut ranges = vec![0..0; ranges_len];
-        for range in ranges.iter_mut(){
-            let start = byteorder::ReadBytesExt::read_u64::<LittleEndian>(input).unwrap() as usize; 
-            let end = byteorder::ReadBytesExt::read_u64::<LittleEndian>(input).unwrap() as usize; 
-            *range = start..end;
-        }
-
-        Ok(Self{ranges, prefix_length})
-    }
-}
-
 #[cfg(test)]
 mod tests {
-
-    
-
-    use crate::builder::BitPackedKmerSortingMem;
     use super::*;
+    use crate::builder::BitPackedKmerSortingMem;
+    use crate::precalc::PrefixLookupTable;
 
     #[allow(non_snake_case)]
     fn ACGT_to_0123(c: u8) -> u8 {
@@ -996,7 +908,7 @@ mod tests {
 
         // Test prefix looup table
         let two_mers = [b"AA", b"AC", b"AG", b"AT", b"CA", b"CC", b"CG", b"CT", b"GA", b"GC", b"GG", b"GT", b"TA", b"TC", b"TG", b"TT"];
-        let lut = PrefixLookupTable::new(&sbwt, 2);
+        let lut = VectorLookupTable::new(&sbwt, 2);
         for two_mer in two_mers {
             let I1 = match sbwt.search(two_mer){
                 Some(I) => I,

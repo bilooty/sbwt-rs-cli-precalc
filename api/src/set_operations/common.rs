@@ -1,7 +1,8 @@
-use std::ops::Range;
-use bitvec::prelude::*;
-use crate::subsetseq::*;
+use crate::precalc::{PrefixLookupTable, VectorLookupTable};
 use crate::sbwt::*;
+use crate::subsetseq::*;
+use bitvec::prelude::*;
+use std::ops::Range;
 
 type BitVec = bitvec::vec::BitVec<u64, Lsb0>;
 
@@ -39,9 +40,9 @@ pub(super) fn build_index<SS: SubsetSeq>(new_rows: Vec<bitvec::vec::BitVec<u64, 
     let n_sets = subsetseq.len();
     let mut index = SbwtIndex::<SS>::from_parts(
         subsetseq, n_kmers, k, C,
-        PrefixLookupTable::new_empty(n_sets));
+        VectorLookupTable::new_empty(n_sets));
 
-    let lut = PrefixLookupTable::new(&index, new_prefix_lookup_table_length);
+    let lut = VectorLookupTable::new(&index, new_prefix_lookup_table_length);
     index.set_lookup_table(lut);
     index
 }
