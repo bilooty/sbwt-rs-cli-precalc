@@ -14,6 +14,7 @@ use sbwt::dbg::Dbg;
 use sbwt::sbwt_index_variant::SbwtIndexVariant;
 use sbwt::*;
 use sbwt::benchmark;
+use sbwt::precalc::PrefixLookupTable;
 use std::sync::Arc;
 
 mod check;
@@ -1869,10 +1870,10 @@ fn main() {
 
     let matches = cli.get_matches();
 
-    // Initialize logging 
+    // Initialize logging
     let mut builder = env_logger::builder();
     if matches.get_flag("verbose") {
-        builder.filter_level(log::LevelFilter::Debug);
+        builder.filter_level(log::LevelFilter::Trace);
     } else {
         builder.filter_level(log::LevelFilter::Info);
     };

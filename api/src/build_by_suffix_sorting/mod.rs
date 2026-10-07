@@ -685,10 +685,10 @@ pub(crate) fn collect_output<SS: SubsetSeq + Send>(
         n_kmers,
         k,
         C,
-        crate::precalc::VectorLookupTable::new_empty(n_sets)
+        crate::precalc::PrefixLookupTable::new_empty(n_sets)
     );
     // TODO: add a parameter for prefix_length?
-    let prefix_lookup_table = crate::precalc::VectorLookupTable::new(&index, 8);
+    let prefix_lookup_table = crate::precalc::PrefixLookupTable::new(&index, 8);
     index.set_lookup_table(prefix_lookup_table);
     let lcs = lcs.map(LcsArray::new);
 

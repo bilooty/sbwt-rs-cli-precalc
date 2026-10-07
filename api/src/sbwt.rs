@@ -15,7 +15,7 @@ use rayon::iter::ParallelIterator;
 
 use crate::compact_int_vector::CompactIntVector;
 use crate::compact_int_vector::CompactIntVectorMutSlice;
-use crate::precalc::{PrefixLookupTable, VectorLookupTable};
+use crate::precalc::{PrefixLookupTable};
 use crate::sdsl_compatibility::load_known_width_sdsl_int_vector;
 use crate::sdsl_compatibility::load_sdsl_bit_vector;
 use crate::subsetseq::*;
@@ -94,7 +94,7 @@ pub struct SbwtIndex<SS: SubsetSeq> {
     n_kmers: usize,
     k: usize,
     C: Vec<usize>, // Cumulative character counts (includes one ghost dollar)
-    prefix_lookup_table: VectorLookupTable,
+    prefix_lookup_table: PrefixLookupTable,
 }
 
 
@@ -215,7 +215,7 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
         let mut subset_rank = SubsetMatrix::new_from_bit_vectors(vec![A_bits, C_bits, G_bits, T_bits]);
         subset_rank.build_rank();
 
-        let prefix_lut = VectorLookupTable {ranges, prefix_length: precalc_k};
+        let prefix_lut = PrefixLookupTable {ranges, prefix_length: precalc_k};
 
         Ok(SbwtIndex::from_parts(subset_rank, n_kmers, k, C_array, prefix_lut))
 
@@ -335,7 +335,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
             })
             .collect::<Vec<usize>>();
 
-        let prefix_lookup_table = VectorLookupTable::load(input)?;
+        let prefix_lookup_table = PrefixLookupTable::load(input)?;
 
         let index = Self {
             sbwt: subset_rank,
@@ -506,12 +506,12 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
     }
 
     /// Set the prefix lookup table of the data structure.
-    pub fn set_lookup_table(&mut self, prefix_lookup_table: VectorLookupTable){
+    pub fn set_lookup_table(&mut self, prefix_lookup_table: PrefixLookupTable){
         self.prefix_lookup_table = prefix_lookup_table;
     }
 
     /// Get the prefix lookup table of the data structure.
-    pub fn get_lookup_table(&self) -> &VectorLookupTable {
+    pub fn get_lookup_table(&self) -> &PrefixLookupTable {
         &self.prefix_lookup_table
     }
 
@@ -522,12 +522,12 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
 
     /// Internal function: construct from parts.
     #[allow(non_snake_case)]
-    pub fn from_parts(subset_rank: SS, n_kmers: usize, k: usize, C: Vec<usize>, prefix_lookup_table: VectorLookupTable) -> Self {
+    pub fn from_parts(subset_rank: SS, n_kmers: usize, k: usize, C: Vec<usize>, prefix_lookup_table: PrefixLookupTable) -> Self {
         Self {sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table}
     }
 
     // Returns the subset rank structure, the number of k-mers, k, the C-array and the prefix lookup table
-    pub fn into_parts(self) -> (SS, usize, usize, Vec<usize>, VectorLookupTable) {
+    pub fn into_parts(self) -> (SS, usize, usize, Vec<usize>, PrefixLookupTable) {
         (self.sbwt, self.n_kmers, self.k, self.C, self.prefix_lookup_table)
     }
 
@@ -540,8 +540,8 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         }
         let C = subset_rank.get_C_array();
         let n = subset_rank.len();
-        let mut index = Self{sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table: VectorLookupTable::new_empty(n)};
-        index.prefix_lookup_table = VectorLookupTable::new(&index, precalc_prefix_length);
+        let mut index = Self{sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table: PrefixLookupTable::new_empty(n)};
+        index.prefix_lookup_table = PrefixLookupTable::new(&index, precalc_prefix_length);
 
         index
     }
@@ -908,7 +908,7 @@ mod tests {
 
         // Test prefix looup table
         let two_mers = [b"AA", b"AC", b"AG", b"AT", b"CA", b"CC", b"CG", b"CT", b"GA", b"GC", b"GG", b"GT", b"TA", b"TC", b"TG", b"TT"];
-        let lut = VectorLookupTable::new(&sbwt, 2);
+        let lut = PrefixLookupTable::new(&sbwt, 2);
         for two_mer in two_mers {
             let I1 = match sbwt.search(two_mer){
                 Some(I) => I,

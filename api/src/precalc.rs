@@ -4,31 +4,26 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::fmt::Debug;
 use std::io::{Read, Write};
 
+/// A table storing the SBWT intervals of all 4^p possible p-mers.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct PrefixLookupTable {
+    /// ranges\[i\] is the interval of the p-mer with colexicographic rank
+    /// i in the sorted list of all possible p-mers.
+    /// If the p-mer does not exist in the SBWT, the range is [0..0).
+    pub ranges: Vec<std::ops::Range<usize>>,
 
-
-/// Generic interface for SBWT precalc tables
-pub trait PrefixLookupTable : Clone + Eq + PartialEq + Debug {
-    /// Create a new prefix lookup table containing only the interval of the
-    /// empty string.
-    fn new_empty(n_sets_in_sbwt: usize) -> Self;
-    /// Create a new prefix lookup table by searching all DNA strings of length `prefix_length`
-    /// in the given sbwt.
-    fn new<SS: SubsetSeq>(sbwt: &SbwtIndex<SS>, prefix_length: usize) -> Self;
-    /// Look up the colex interval of a given prefix.
-    fn lookup(&self, prefix: &[u8]) -> std::ops::Range<usize>;
-    fn load<R: Read>(input: &mut R) -> std::io::Result<Self>;
-    fn serialize<W: Write>(&self, out: &mut W) -> std::io::Result<usize>;
+    /// Prefix length p.
+    pub prefix_length: usize,
 }
-
-impl PrefixLookupTable for VectorLookupTable {
+impl PrefixLookupTable {
     // Clippy false positive. It's actually intended like this
     #[allow(clippy::single_range_in_vec_init)]
-     fn new_empty(n_sets_in_sbwt: usize) -> VectorLookupTable {
+     pub fn new_empty(n_sets_in_sbwt: usize) -> PrefixLookupTable {
         Self{ranges: vec![0..n_sets_in_sbwt], prefix_length: 0}
     }
 
 
-    fn new<SS: SubsetSeq>(sbwt: &SbwtIndex<SS>, prefix_length: usize) -> VectorLookupTable {
+    pub fn new<SS: SubsetSeq>(sbwt: &SbwtIndex<SS>, prefix_length: usize) -> PrefixLookupTable {
         let mut pmer = vec![0u8; prefix_length];
         let mut ranges = vec![0..0; num::pow(4_usize, prefix_length)];
         for x in 0..num::pow(4, prefix_length) as u64{
@@ -42,12 +37,14 @@ impl PrefixLookupTable for VectorLookupTable {
             }
 
             if let Some(range) = sbwt.search(&pmer) {
+                log::trace!("range [{}, {})", range.start, range.end);
                 ranges[x as usize] = range;
+             
             } // Else left as 0..0
         }
-        VectorLookupTable {ranges, prefix_length}
+        PrefixLookupTable {ranges, prefix_length}
     }
-    fn lookup(&self, prefix: &[u8]) -> std::ops::Range<usize> {
+    pub fn lookup(&self, prefix: &[u8]) -> std::ops::Range<usize> {
         assert!(prefix.len() == self.prefix_length);
         let mut table_idx = 0_usize;
         for (i, c) in prefix.iter().rev().enumerate() {
@@ -61,8 +58,8 @@ impl PrefixLookupTable for VectorLookupTable {
     }
 
     /// Loads a a prefix lookup table that was previosly serialized with
-    /// [VectorLookupTable::serialize].
-    fn load<R: Read>(input: &mut R) -> std::io::Result<Self> {
+    /// [PrefixLookupTable::serialize].
+    pub fn load<R: Read>(input: &mut R) -> std::io::Result<Self> {
 
         let prefix_length = byteorder::ReadBytesExt::read_u64::<LittleEndian>(input).unwrap()
             as usize;
@@ -81,9 +78,9 @@ impl PrefixLookupTable for VectorLookupTable {
     }
 
     /// Write the lookup table to the given writer.
-    /// The lookup table can be then later loaded with [VectorLookupTable::load].
+    /// The lookup table can be then later loaded with [PrefixLookupTable::load].
     /// Returns number of bytes written.
-    fn serialize<W: Write>(&self, out: &mut W) -> std::io::Result<usize> {
+    pub fn serialize<W: Write>(&self, out: &mut W) -> std::io::Result<usize> {
         let mut n_written = 0_usize;
         n_written += util::write_bytes(out, &(self.prefix_length as u64).to_le_bytes())?;
         n_written += util::write_bytes(out, &(self.ranges.len() as u64).to_le_bytes())?;
@@ -95,14 +92,3 @@ impl PrefixLookupTable for VectorLookupTable {
     }
 }
 
-/// A table storing the SBWT intervals of all 4^p possible p-mers.
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct VectorLookupTable {
-    /// ranges\[i\] is the interval of the p-mer with colexicographic rank
-    /// i in the sorted list of all possible p-mers.
-    /// If the p-mer does not exist in the SBWT, the range is [0..0).
-    pub ranges: Vec<std::ops::Range<usize>>,
-
-    /// Prefix length p.
-    pub prefix_length: usize,
-}

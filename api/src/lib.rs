@@ -212,7 +212,7 @@ mod set_operations;
 pub use set_operations::{MergeInterleaving, merge, intersect, difference};
 
 mod atomic_bitmap;
-mod precalc;
+pub mod precalc;
 
 pub use unitig_flipper::Orientation;
 pub use util::reverse_complement_in_place;

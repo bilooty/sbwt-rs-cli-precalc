@@ -1,6 +1,6 @@
 use super::common::{allocate_rows, build_index, transpose_and_concat_pieces};
 use super::interleaving::{compute_piece_ranges, MergeInterleaving};
-use crate::precalc::VectorLookupTable;
+use crate::precalc::PrefixLookupTable;
 use crate::sbwt::*;
 use crate::subsetseq::*;
 use bitvec::prelude::*;
@@ -177,7 +177,7 @@ fn debug_assert_sbwt_invariant<SS: SubsetSeq>(index: &SbwtIndex<SS>, label: &str
         n - 1 - in_edges);
 }
 
-/// Merge `index1` and `index2` according to `interleaving`. After the merge, a [VectorLookupTable] with
+/// Merge `index1` and `index2` according to `interleaving`. After the merge, a [PrefixLookupTable] with
 /// prefix length `new_prefix_lookup_table_length` will be added to new index. The number of threads used
 /// in the merge is `n_threads`. Indexes are passed in as Arcs because if those are the only existing references,
 /// this function can free the input SBWTs early which lowers the memory peak. Passing as Arc also allows

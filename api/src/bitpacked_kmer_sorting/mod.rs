@@ -10,7 +10,7 @@ use human_bytes::human_bytes;
 
 use std::{io::Seek, path::Path};
 
-use crate::precalc::{PrefixLookupTable, VectorLookupTable};
+use crate::precalc::{PrefixLookupTable};
 use crate::{sbwt::SbwtIndex, streaming_index::LcsArray, subsetseq::SubsetSeq, tempfile::TempFileManager, util::DNA_ALPHABET};
 
 fn file_size(path: &Path) -> usize {
@@ -90,10 +90,10 @@ pub fn build_from_kmers_on_disk<const B: usize, SS: SubsetSeq + Send>(k: usize, 
         n_kmers,
         k,
         C,
-        VectorLookupTable::new_empty(n_sets))
+        PrefixLookupTable::new_empty(n_sets))
     , lcs.map(LcsArray::new));
 
-    let lut = VectorLookupTable::new(&index, 8);
+    let lut = PrefixLookupTable::new(&index, 8);
     index.set_lookup_table(lut);
     (index, lcs)
 }

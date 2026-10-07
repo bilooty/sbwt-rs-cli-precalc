@@ -1,4 +1,4 @@
-use crate::precalc::{PrefixLookupTable, VectorLookupTable};
+use crate::precalc::{PrefixLookupTable};
 use crate::sbwt::*;
 use crate::subsetseq::*;
 use bitvec::prelude::*;
@@ -40,9 +40,9 @@ pub(super) fn build_index<SS: SubsetSeq>(new_rows: Vec<bitvec::vec::BitVec<u64, 
     let n_sets = subsetseq.len();
     let mut index = SbwtIndex::<SS>::from_parts(
         subsetseq, n_kmers, k, C,
-        VectorLookupTable::new_empty(n_sets));
+        PrefixLookupTable::new_empty(n_sets));
 
-    let lut = VectorLookupTable::new(&index, new_prefix_lookup_table_length);
+    let lut = PrefixLookupTable::new(&index, new_prefix_lookup_table_length);
     index.set_lookup_table(lut);
     index
 }

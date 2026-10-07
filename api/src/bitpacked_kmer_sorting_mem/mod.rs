@@ -7,7 +7,7 @@ mod cursors;
 use dummies::KmersWithLengths;
 use kmer_splitter::get_bitpacked_sorted_distinct_kmers;
 
-use crate::precalc::{PrefixLookupTable, VectorLookupTable};
+use crate::precalc::{PrefixLookupTable};
 use crate::{sbwt::SbwtIndex, streaming_index::LcsArray, subsetseq::SubsetSeq, util::DNA_ALPHABET};
 
 /// Build SBWT and optionally the LCS array fully in memory using bitpacked k-mer sorting.
@@ -66,10 +66,10 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
             n_kmers,
             k,
             C,
-            VectorLookupTable::new_empty(n_sets))
+            PrefixLookupTable::new_empty(n_sets))
                                 , lcs.map(LcsArray::new));
 
-        let lut = VectorLookupTable::new(&index, 8);
+        let lut = PrefixLookupTable::new(&index, 8);
         index.set_lookup_table(lut);
         (index, lcs)
 
