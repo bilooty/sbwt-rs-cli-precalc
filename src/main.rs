@@ -1,4 +1,4 @@
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::fs::File;
 use std::io;
 use std::io::stdout;
@@ -1176,8 +1176,90 @@ fn transform_index_command(matches: &clap::ArgMatches) {
 fn stats_command(matches: &clap::ArgMatches) {
     let index_path = matches.get_one::<std::path::PathBuf>("index").unwrap();
     let cpp_format = matches.get_flag("load-cpp-format");
-
+    let prefix_stats = matches.get_flag("prefix");
+    let prefix_print = matches.get_flag("print-prefix");
     let index = load_index(index_path, cpp_format);
+
+    if prefix_stats {
+        let table: &PrefixLookupTable = index.get_lookup_table();
+        let ranges = &table.ranges;
+        let total_size = table.size_bytes;
+        println!("Prefix table length: {}", ranges.len());
+        println!("Prefix table size (B): {}B", total_size);
+        println!("Prefix table size (KB): {}KB", total_size as f64/1000.0);
+        println!("Prefix table size (MB): {}MB", total_size as f64 /1000000.0);
+        println!("Prefix table size (GB): {}GB", (total_size as f64 )/ 1000000000.0);
+        let table = index.get_lookup_table();
+        let ranges = &table.ranges;
+        let mut max_diff = 0;
+        let mut min_start  =usize::MAX;
+        let mut max_end = 0;
+        let mut ten = [0u64; 21];
+        let one_hundredth = ranges.len() / 500;
+        let breakpoint = one_hundredth;
+        let mut zeros = 0;
+        let mut i = 0;
+        let mut zero = false;
+        let mut zero_prints = 0;
+        for range in ranges {
+            let diff = range.end - range.start;
+            max_diff = max(diff, max_diff);
+            if range.start != 0 {
+                min_start = min(range.start, min_start);
+            }
+            max_end = max(range.end, max_end);
+            if range.start == 0{
+                zeros += 1;
+                ten[0] += 1;
+                zero = true            }
+            i+=1;
+            if i > breakpoint {
+                i = 0;
+                print!("{:}% ({}/{}), ", ((zeros as f32 / breakpoint as f32)* 100f32).floor(), zeros, one_hundredth);
+                zero_prints+=1;
+                if zero_prints >= 7 {
+                    println!("");
+                    zero_prints = 0;
+                }
+                zeros = 0;
+            }
+            if zero == false {
+                ten[(range.start).ilog10() as usize + 1] += 1;
+            }
+            zero = false;
+        }
+        println!("");
+
+        let mut i = 0;
+        for t in ten {
+            let mut num = 0;
+            if i > 0 {
+                num = 10u64.pow(i-1);
+            }
+            println!("{: <10} - {}", num, t);
+            i += 1;
+        }
+        println!("max_diff: {}", max_diff);
+        println!("min start: {}", min_start);
+        println!("max end: {}", max_end);
+    }
+    if prefix_print {
+        let table = index.get_lookup_table();
+        let ranges = &table.ranges;
+
+        let mut prev = 0i32;
+        let mut count = 0;
+        for range in ranges {
+            let diff = range.end - range.start;
+            let rs = format!("[{}, {})", range.start, range.end);
+            println!("{: <30}| diff: {: <10} | delta: {: <10}", rs, diff, range.start as i32 - prev);
+            prev = range.start as i32;
+            count +=1;
+            if count > 20 {
+                break;
+            }
+        }
+    }
 
     println!("Number of k-mers: {}", index.n_kmers());
     println!("Number of sbwt sets: {}", index.n_sets());
@@ -1656,6 +1738,14 @@ fn main() {
                 .long("load-cpp-format")
                 .action(clap::ArgAction::SetTrue)
             )
+            .arg(clap::Arg::new("prefix")
+                .help("Whether or not to provide stats about the prefix table")
+                .long("prefix")
+                .action(clap::ArgAction::SetTrue))
+            .arg(clap::Arg::new("print-prefix")
+                .help("Whether or not to print the contents of the prefix table")
+                .long("print-prefix")
+                .action(clap::ArgAction::SetTrue))
         )
         .subcommand(clap::Command::new("kmer-at-colex")
             .about("Print the k-mer with a given colexicographic rank")

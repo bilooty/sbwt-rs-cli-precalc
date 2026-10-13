@@ -131,8 +131,6 @@ use input_structures::{Bwt, Lcp, CHAR_TO_INDEX};
 use stream::StreamBuilder;
 
 use std::sync::{atomic::AtomicUsize, Arc, Mutex};
-
-use crate::precalc::PrefixLookupTable;
 use bitvec::field::BitField;
 use bitvec::vec::BitVec;
 use simple_sds_sbwt::ops::{BitVec as BitVecTrait, Rank, Select};

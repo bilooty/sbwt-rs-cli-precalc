@@ -215,7 +215,7 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
         let mut subset_rank = SubsetMatrix::new_from_bit_vectors(vec![A_bits, C_bits, G_bits, T_bits]);
         subset_rank.build_rank();
 
-        let prefix_lut = PrefixLookupTable {ranges, prefix_length: precalc_k};
+        let prefix_lut = PrefixLookupTable {ranges, prefix_length: precalc_k, size_bytes: 0};
 
         Ok(SbwtIndex::from_parts(subset_rank, n_kmers, k, C_array, prefix_lut))
 
