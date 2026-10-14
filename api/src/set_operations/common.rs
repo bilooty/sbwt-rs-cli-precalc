@@ -1,4 +1,4 @@
-use crate::precalc::{PrefixLookupTable};
+use crate::precalc::{PrefixLookupTable, PrefixTableKind};
 use crate::sbwt::*;
 use crate::subsetseq::*;
 use bitvec::prelude::*;
@@ -31,7 +31,12 @@ pub(super) fn transpose_and_concat_pieces(pieces_vecvec: Vec<Vec<bitvec::vec::Bi
 }
 
 // Computes the C array, builds the subset rank structure, and assembles the final SbwtIndex.
-pub(super) fn build_index<SS: SubsetSeq>(new_rows: Vec<bitvec::vec::BitVec<u64, Lsb0>>, n_kmers: usize, k: usize, n_threads: usize, new_prefix_lookup_table_length: usize) -> SbwtIndex<SS> {
+pub(super) fn build_index<SS: SubsetSeq>(
+    new_rows: Vec<bitvec::vec::BitVec<u64, Lsb0>>,
+    n_kmers: usize, k: usize, n_threads: usize,
+    new_prefix_lookup_table_length: usize,
+    new_prefix_lookup_table_kind: PrefixTableKind,
+) -> SbwtIndex<SS> {
     #[allow(non_snake_case)] // C-array is an established convention in BWT indexes
     let C: Vec<usize> = crate::util::get_C_array_parallel(&new_rows, n_threads);
 
@@ -41,9 +46,7 @@ pub(super) fn build_index<SS: SubsetSeq>(new_rows: Vec<bitvec::vec::BitVec<u64, 
     let mut index = SbwtIndex::<SS>::from_parts(
         subsetseq, n_kmers, k, C,
         PrefixLookupTable::new_empty(n_sets));
-
-    let lut = PrefixLookupTable::new(&index, new_prefix_lookup_table_length);
-    index.set_lookup_table(lut);
+    index.rebuild_lookup_table(new_prefix_lookup_table_kind, new_prefix_lookup_table_length);
     index
 }
 

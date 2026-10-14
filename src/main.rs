@@ -14,7 +14,7 @@ use sbwt::dbg::Dbg;
 use sbwt::sbwt_index_variant::SbwtIndexVariant;
 use sbwt::*;
 use sbwt::benchmark;
-use sbwt::precalc::PrefixLookupTable;
+use sbwt::precalc::PrefixTableKind;
 use std::sync::Arc;
 
 mod check;
@@ -36,7 +36,7 @@ struct MyMultiFileSeqReader {
 
     // Need to copy sequences to a local buffer because we can't return references
     // into the current reader because it may be freed while the caller still holds a reference.
-    local_buf: Vec<u8>, 
+    local_buf: Vec<u8>,
 }
 
 impl MyMultiFileSeqReader {
@@ -230,6 +230,7 @@ fn build_command(matches: &clap::ArgMatches){
     let add_revcomp = matches.get_flag("add-revcomp");
     let add_all_dummy_paths = matches.get_flag("add-all-dummy-paths");
     let precalc_length = *matches.get_one::<usize>("prefix-precalc-length").unwrap();
+    let prefix_table_kind = *matches.get_one::<PrefixTableKind>("prefix-table").unwrap();
     let temp_dir = matches.get_one::<std::path::PathBuf>("temp-dir").unwrap();
 
     let input_mode = if let Some(input) = infile {
@@ -242,7 +243,7 @@ fn build_command(matches: &clap::ArgMatches){
 
     // Using a dynamic dispatch for the reader here. Not sure if this might
     // have a measurable performance hit? It's probably alright if the input sequences
-    // are long (100+ base pairs?), but I'm not sure about shorter sequences. We could switch 
+    // are long (100+ base pairs?), but I'm not sure about shorter sequences. We could switch
     //to enum dispatch or even monomorphized IO.
     let reader: Box<dyn crate::SeqStream + Send> = match input_mode {
         InputMode::SingleFile(path_buf) => {
@@ -268,7 +269,7 @@ fn build_command(matches: &clap::ArgMatches){
     let (sbwt, lcs) = if via_libsais {
         #[cfg(feature = "libsais")]
         {
-            let builder = BuildByLibsais::new(reader, k).stream_suffix_array_from_disk(stream_suffix_array_from_disk).temp_dir(temp_dir).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).add_all_dummy_paths(add_all_dummy_paths);
+            let builder = BuildByLibsais::new(reader, k).stream_suffix_array_from_disk(stream_suffix_array_from_disk).temp_dir(temp_dir).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).prefix_table_kind(prefix_table_kind).add_all_dummy_paths(add_all_dummy_paths);
             builder.run()
         }
         #[cfg(not(feature = "libsais"))]
@@ -276,13 +277,13 @@ fn build_command(matches: &clap::ArgMatches){
             panic!("--via-libsais requires sbwt-cli to be built with `--features libsais`");
         }
     } else if bounded_suffix_sort {
-        let builder = BuildByBoundedSuffixSort::new(reader, k).prefix_length_for_bucket_sort(bucket_sort_prefix_length).stream_suffix_array_from_disk(stream_suffix_array_from_disk).temp_dir(temp_dir).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).add_all_dummy_paths(add_all_dummy_paths);
+        let builder = BuildByBoundedSuffixSort::new(reader, k).prefix_length_for_bucket_sort(bucket_sort_prefix_length).stream_suffix_array_from_disk(stream_suffix_array_from_disk).temp_dir(temp_dir).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).prefix_table_kind(prefix_table_kind).add_all_dummy_paths(add_all_dummy_paths);
         builder.run()
     } else if in_memory {
-        let builder = BitPackedKmerSortingMem::new(reader, k).mem_gb(mem_gb).dedup_batches(dedup_batches).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).add_all_dummy_paths(add_all_dummy_paths);
+        let builder = BitPackedKmerSortingMem::new(reader, k).mem_gb(mem_gb).dedup_batches(dedup_batches).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).prefix_table_kind(prefix_table_kind).add_all_dummy_paths(add_all_dummy_paths);
         builder.run()
     } else {
-        let builder = BitPackedKmerSortingDisk::new(reader, k).mem_gb(mem_gb).dedup_batches(dedup_batches).temp_dir(temp_dir).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).add_all_dummy_paths(add_all_dummy_paths);
+        let builder = BitPackedKmerSortingDisk::new(reader, k).mem_gb(mem_gb).dedup_batches(dedup_batches).temp_dir(temp_dir).n_threads(n_threads).add_rev_comp(add_revcomp).build_lcs(build_lcs).precalc_length(precalc_length).prefix_table_kind(prefix_table_kind).add_all_dummy_paths(add_all_dummy_paths);
         builder.run()
     };
     let end_time = std::time::Instant::now();
@@ -360,6 +361,8 @@ fn build_from_kmers_on_disk_command(matches: &clap::ArgMatches){
     let k = *matches.get_one::<usize>("k").unwrap();
     let n_threads = *matches.get_one::<usize>("threads").unwrap();
     let temp_dir = matches.get_one::<std::path::PathBuf>("temp-dir").unwrap();
+    let precalc_length = *matches.get_one::<usize>("prefix-precalc-length").unwrap();
+    let prefix_table_kind = *matches.get_one::<PrefixTableKind>("prefix-table").unwrap();
 
     // Need to do this to be able to append .sbwt to the filename (PathBuf can only set extension, which replaces the existing one, meaning we can't stack extensions).
     let mut sbwt_outfile = out_prefix.clone().into_os_string().into_string().unwrap();
@@ -371,7 +374,8 @@ fn build_from_kmers_on_disk_command(matches: &clap::ArgMatches){
     log::info!("Building SBWT from k-mers on disk");
     let start_time = std::time::Instant::now();
 
-    let (sbwt, lcs) = build_from_kmers_on_disk::<SubsetMatrix>(k, n_threads, build_lcs, temp_dir, kmers_file, first_mers_file.map(|p| p.as_path()));
+    let (mut sbwt, lcs) = build_from_kmers_on_disk::<SubsetMatrix>(k, n_threads, build_lcs, temp_dir, kmers_file, first_mers_file.map(|p| p.as_path()));
+    ensure_lookup_table(&mut sbwt, prefix_table_kind, precalc_length);
 
     let end_time = std::time::Instant::now();
     log::info!("Construction finished in {:.2} seconds", (end_time - start_time).as_secs_f64());
@@ -486,13 +490,13 @@ fn streaming_search<SS: SubsetSeq>(ss: &StreamingIndex<SbwtIndex<SS>, LcsArray>,
 // the lookups call the index in a tight loop to do the right extension and
 // we don't want a match statement in there to select the right index variant every time.
 fn lookup_query<SS: SubsetSeq>(sbwt: &SbwtIndex<SS>, lcs: Option<LcsArray>, queryfile: &std::path::Path, outfile: Option<&std::path::Path>, membership_only: bool) {
-    log::info!("k = {}, precalc length = {}, # kmers = {}, # sbwt sets = {}", sbwt.k(), sbwt.get_lookup_table().prefix_length, sbwt.n_kmers(), sbwt.n_sets());
+    log::info!("k = {}, precalc length = {}, precalc type = {}, # kmers = {}, # sbwt sets = {}", sbwt.k(), sbwt.get_lookup_table().prefix_length(), sbwt.get_lookup_table().kind(), sbwt.n_kmers(), sbwt.n_sets());
 
     let mut query_reader = DynamicFastXReader::from_file(&queryfile).unwrap();
     let mut out = outfile.map(|f| std::io::BufWriter::new(std::fs::File::create(f).unwrap()));
     let mut stdout = stdout();
 
-    let streaming_index = lcs.as_ref().map(|lcs| StreamingIndex::new(sbwt, lcs)); 
+    let streaming_index = lcs.as_ref().map(|lcs| StreamingIndex::new(sbwt, lcs));
 
     let start_time = std::time::Instant::now();
     let mut n_query_kmers = 0_usize;
@@ -556,12 +560,12 @@ fn lookup_query_command(matches: &clap::ArgMatches){
                 },
                 Err(_) => {
                     log::info!("No file found at {} -> running without LCS support", p.display());
-                    None 
+                    None
                 }
             }
         }
     };
-    
+
     let lcs = match lcs_reader {
         Some(mut r) => {
             log::info!("Loading LCS array");
@@ -698,7 +702,7 @@ fn matching_statistics_command(matches: &clap::ArgMatches){
 }
 
 fn benchmark<SS: SubsetSeq, W: Write>(sbwt: SbwtIndex<SS>, lcs: Option<LcsArray>, json_out: Option<&mut W>) {
-    log::info!("benchmarking index with k = {}, precalc length = {}, # kmers = {}, # sbwt sets = {}", sbwt.k(), sbwt.get_lookup_table().prefix_length, sbwt.n_kmers(), sbwt.n_sets());
+    log::info!("benchmarking index with k = {}, precalc length = {}, precalc type = {}, # kmers = {}, # sbwt sets = {}", sbwt.k(), sbwt.get_lookup_table().prefix_length(), sbwt.get_lookup_table().kind(), sbwt.n_kmers(), sbwt.n_sets());
     let results = benchmark::benchmark_all(sbwt, lcs);
 
     // Write results in json if requested
@@ -712,6 +716,7 @@ fn benchmark<SS: SubsetSeq, W: Write>(sbwt: SbwtIndex<SS>, lcs: Option<LcsArray>
 fn benchmark_command(matches: &clap::ArgMatches) {
     let indexfile = matches.get_one::<PathBuf>("index").unwrap();
     let precalc_length = matches.get_one::<usize>("prefix-precalc-length");
+    let prefix_table_kind = matches.get_one::<PrefixTableKind>("prefix-table");
     let cpp_format = matches.get_flag("load-cpp-format");
     let json_outfile = matches.get_one::<PathBuf>("json-out");
 
@@ -723,10 +728,12 @@ fn benchmark_command(matches: &clap::ArgMatches) {
 
     let mut json_out = json_outfile.map(|path| File::create(path).unwrap());
 
-    if let Some(p) = precalc_length {
-        log::info!("Rebuilding the precalc table with prefix length {}", p);
-        let new_table = index.build_lookup_table(*p);
-        index.set_lookup_table(new_table);
+    if precalc_length.is_some() || prefix_table_kind.is_some() {
+        // Anything not given on the command line is kept from the stored table
+        let p = precalc_length.copied().unwrap_or_else(|| index.get_lookup_table().prefix_length());
+        let kind = prefix_table_kind.copied().unwrap_or_else(|| index.get_lookup_table().kind());
+        log::info!("Rebuilding the precalc table with prefix length {} and type {}", p, kind);
+        index.rebuild_lookup_table(kind, p);
     }
 
     // We unwrap the enum here to avoid unwrapping in a tight inner loop.
@@ -782,11 +789,11 @@ fn dump_unitigs_command(matches: &clap::ArgMatches) {
 
 }
 
-// Resolves the prefix lookup table length to use for the result of a set operation on
+// Resolves the prefix lookup table length and type to use for the result of a set operation on
 // index1 and index2, warning if the two inputs disagree.
-fn resolve_lut_len<SS: SubsetSeq>(index1: &SbwtIndex<SS>, index2: &SbwtIndex<SS>) -> usize {
-    let lut_len1 = index1.get_lookup_table().prefix_length;
-    let lut_len2 = index2.get_lookup_table().prefix_length;
+fn resolve_lut<SS: SubsetSeq>(index1: &SbwtIndex<SS>, index2: &SbwtIndex<SS>) -> (usize, PrefixTableKind) {
+    let lut_len1 = index1.get_lookup_table().prefix_length();
+    let lut_len2 = index2.get_lookup_table().prefix_length();
     let lut_len = max(lut_len1, lut_len2);
 
     if lut_len1 != lut_len2 {
@@ -794,16 +801,36 @@ fn resolve_lut_len<SS: SubsetSeq>(index1: &SbwtIndex<SS>, index2: &SbwtIndex<SS>
         log::warn!("Using length {} for the resulting index", lut_len);
     }
 
-    lut_len
+    let lut_kind1 = index1.get_lookup_table().kind();
+    let lut_kind2 = index2.get_lookup_table().kind();
+    let lut_kind = lut_kind1;
+
+    if lut_kind1 != lut_kind2 {
+        log::warn!("Different lookup table types: {} {}", lut_kind1, lut_kind2);
+        log::warn!("Using type {} for the resulting index", lut_kind);
+    }
+
+    (lut_len, lut_kind)
+}
+
+// Makes sure the index has a prefix lookup table of the given type and prefix length,
+// rebuilding it if the current one differs in either.
+fn ensure_lookup_table<SS: SubsetSeq>(index: &mut SbwtIndex<SS>, kind: PrefixTableKind, prefix_length: usize) {
+    let lut = index.get_lookup_table();
+    if lut.kind() != kind || lut.prefix_length() != prefix_length {
+        log::info!("Building the precalc table with prefix length {} and type {}", prefix_length, kind);
+        index.rebuild_lookup_table(kind, prefix_length);
+    }
 }
 
 fn run_merge<SS: SubsetSeq + Send + Sync>(index1: SbwtIndex<SS>, index2: SbwtIndex<SS>, low_ram: bool, n_threads: usize) -> SbwtIndex<SS> {
-    let lut_len = resolve_lut_len(&index1, &index2);
+    let (lut_len, lut_kind) = resolve_lut(&index1, &index2);
 
     log::info!("Computing the merge interleaving (low-ram mode: {})", low_ram);
     let interl = MergeInterleaving::new(&index1, &index2, low_ram, n_threads);
     log::info!("Executing the merge");
-    let merged = merge(Arc::new(index1), Arc::new(index2), Arc::new(interl), lut_len, n_threads);
+    let mut merged = merge(Arc::new(index1), Arc::new(index2), Arc::new(interl), lut_len, n_threads);
+    ensure_lookup_table(&mut merged, lut_kind, lut_len);
     merged
 }
 
@@ -844,13 +871,15 @@ fn merge_command(matches: &clap::ArgMatches) {
 }
 
 fn run_intersect<SS: SubsetSeq + Send + Sync + Clone>(index1: SbwtIndex<SS>, index2: SbwtIndex<SS>, low_ram: bool, n_threads: usize) -> SbwtIndex<SS> {
-    let lut_len = resolve_lut_len(&index1, &index2);
+    let (lut_len, lut_kind) = resolve_lut(&index1, &index2);
 
     log::info!("Computing the merge interleaving (low-ram mode: {})", low_ram);
     let interl = MergeInterleaving::new(&index1, &index2, low_ram, n_threads);
     log::info!("Executing the intersection");
-    intersect(Arc::new(index1), Arc::new(index2), Arc::new(interl), lut_len, low_ram, n_threads)
-        .unwrap_or_else(|e| panic!("{e:?}"))
+    let mut result = intersect(Arc::new(index1), Arc::new(index2), Arc::new(interl), lut_len, low_ram, n_threads)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    ensure_lookup_table(&mut result, lut_kind, lut_len);
+    result
 }
 
 fn intersect_command(matches: &clap::ArgMatches) {
@@ -891,13 +920,15 @@ fn intersect_command(matches: &clap::ArgMatches) {
 }
 
 fn run_difference<SS: SubsetSeq + Send + Sync + Clone>(index1: SbwtIndex<SS>, index2: SbwtIndex<SS>, low_ram: bool, n_threads: usize) -> SbwtIndex<SS> {
-    let lut_len = resolve_lut_len(&index1, &index2);
+    let (lut_len, lut_kind) = resolve_lut(&index1, &index2);
 
     log::info!("Computing the merge interleaving (low-ram mode: {})", low_ram);
     let interl = MergeInterleaving::new(&index1, &index2, low_ram, n_threads);
     log::info!("Executing the difference (index1 \\ index2)");
-    difference(Arc::new(index1), Arc::new(index2), Arc::new(interl), lut_len, low_ram, n_threads)
-        .unwrap_or_else(|e| panic!("{e:?}"))
+    let mut result = difference(Arc::new(index1), Arc::new(index2), Arc::new(interl), lut_len, low_ram, n_threads)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    ensure_lookup_table(&mut result, lut_kind, lut_len);
+    result
 }
 
 fn difference_command(matches: &clap::ArgMatches) {
@@ -1117,10 +1148,10 @@ fn check_set_operation_command(matches: &clap::ArgMatches) {
         None => { unitigs_to_tempfile(&mut index2, &lcs2, temp_dir, n_threads, !keep_unitigs) }
     };
 
-    check::run_check_set_operation(op, 
-        check::InputTriple{ source_seqs: seq1_source.path.to_path_buf(), index: &index1, lcs: &lcs1 }, 
-        check::InputTriple{ source_seqs: seq2_source.path.to_path_buf(), index: &index2, lcs: &lcs2 }, 
-        &mut result_index)
+    check::run_check_set_operation(op,
+                                   check::InputTriple{ source_seqs: seq1_source.path.to_path_buf(), index: &index1, lcs: &lcs1 },
+                                   check::InputTriple{ source_seqs: seq2_source.path.to_path_buf(), index: &index2, lcs: &lcs2 },
+                                   &mut result_index)
 }
 
 fn transform_index_command(matches: &clap::ArgMatches) {
@@ -1147,21 +1178,23 @@ fn transform_index_command(matches: &clap::ArgMatches) {
         (SbwtIndexVariant::SubsetCorrectionSets(sbwt), "bit_matrix") => {
             log::info!("Transform correction sets -> bit matrix");
             let (sbwt_subsetseq, n_kmers, k, _c_array, prefix_lookup_table) = sbwt.into_parts();
-            let p = prefix_lookup_table.prefix_length;
+            let p = prefix_lookup_table.prefix_length();
+            let kind = prefix_lookup_table.kind();
             let rows: Vec<BitVec<u64, Lsb0>> = sbwt_subsetseq.into_bitvectors();
             let ss_new = SubsetMatrix::new_from_bit_vectors(rows);
-            let index_new = SbwtIndex::<SubsetMatrix>::from_subset_seq(ss_new, n_kmers, k, p);
+            let index_new = SbwtIndex::<SubsetMatrix>::from_subset_seq_with_kind(ss_new, n_kmers, k, p, kind);
             SbwtIndexVariant::SubsetMatrix(index_new)
         },
         (SbwtIndexVariant::SubsetMatrix(sbwt), "correction_sets") => {
             log::info!("Transform bit matrix -> correction sets");
             let (sbwt_subsetseq, n_kmers, k, _c_array, prefix_lookup_table) = sbwt.into_parts();
-            let p = prefix_lookup_table.prefix_length;
+            let p = prefix_lookup_table.prefix_length();
+            let kind = prefix_lookup_table.kind();
             let rows: Vec<BitVec<u64, Lsb0>> = sbwt_subsetseq.into_bitvectors();
             log::info!("Calling new from bit vectors");
             let ss_new = SubsetCorrectionSets::new_from_bit_vectors(rows);
             log::info!("Construction done for subset sequence of size {}, constructing SBWT index", ss_new.size_in_bytes());
-            let index_new = SbwtIndex::<SubsetCorrectionSets>::from_subset_seq(ss_new, n_kmers, k, p);
+            let index_new = SbwtIndex::<SubsetCorrectionSets>::from_subset_seq_with_kind(ss_new, n_kmers, k, p, kind);
             log::info!("SBWT construction done");
             SbwtIndexVariant::SubsetCorrectionSets(index_new)
         },
@@ -1176,93 +1209,110 @@ fn transform_index_command(matches: &clap::ArgMatches) {
 fn stats_command(matches: &clap::ArgMatches) {
     let index_path = matches.get_one::<std::path::PathBuf>("index").unwrap();
     let cpp_format = matches.get_flag("load-cpp-format");
-    let prefix_stats = matches.get_flag("prefix");
-    let prefix_print = matches.get_flag("print-prefix");
+    // let prefix_stats = matches.get_flag("prefix");
+    // let prefix_print = matches.get_flag("print-prefix");
     let index = load_index(index_path, cpp_format);
 
-    if prefix_stats {
-        let table: &PrefixLookupTable = index.get_lookup_table();
-        let ranges = &table.ranges;
-        let total_size = table.size_bytes;
-        println!("Prefix table length: {}", ranges.len());
-        println!("Prefix table size (B): {}B", total_size);
-        println!("Prefix table size (KB): {}KB", total_size as f64/1000.0);
-        println!("Prefix table size (MB): {}MB", total_size as f64 /1000000.0);
-        println!("Prefix table size (GB): {}GB", (total_size as f64 )/ 1000000000.0);
-        let table = index.get_lookup_table();
-        let ranges = &table.ranges;
-        let mut max_diff = 0;
-        let mut min_start  =usize::MAX;
-        let mut max_end = 0;
-        let mut ten = [0u64; 21];
-        let one_hundredth = ranges.len() / 500;
-        let breakpoint = one_hundredth;
-        let mut zeros = 0;
-        let mut i = 0;
-        let mut zero = false;
-        let mut zero_prints = 0;
-        for range in ranges {
-            let diff = range.end - range.start;
-            max_diff = max(diff, max_diff);
-            if range.start != 0 {
-                min_start = min(range.start, min_start);
-            }
-            max_end = max(range.end, max_end);
-            if range.start == 0{
-                zeros += 1;
-                ten[0] += 1;
-                zero = true            }
-            i+=1;
-            if i > breakpoint {
-                i = 0;
-                print!("{:}% ({}/{}), ", ((zeros as f32 / breakpoint as f32)* 100f32).floor(), zeros, one_hundredth);
-                zero_prints+=1;
-                if zero_prints >= 7 {
-                    println!("");
-                    zero_prints = 0;
-                }
-                zeros = 0;
-            }
-            if zero == false {
-                ten[(range.start).ilog10() as usize + 1] += 1;
-            }
-            zero = false;
-        }
-        println!("");
-
-        let mut i = 0;
-        for t in ten {
-            let mut num = 0;
-            if i > 0 {
-                num = 10u64.pow(i-1);
-            }
-            println!("{: <10} - {}", num, t);
-            i += 1;
-        }
-        println!("max_diff: {}", max_diff);
-        println!("min start: {}", min_start);
-        println!("max end: {}", max_end);
-    }
-    if prefix_print {
-        let table = index.get_lookup_table();
-        let ranges = &table.ranges;
-
-        let mut prev = 0i32;
-        let mut count = 0;
-        for range in ranges {
-            let diff = range.end - range.start;
-            let rs = format!("[{}, {})", range.start, range.end);
-            println!("{: <30}| diff: {: <10} | delta: {: <10}", rs, diff, range.start as i32 - prev);
-            prev = range.start as i32;
-            count +=1;
-            if count > 20 {
-                break;
-            }
-        }
-    }
+    // if prefix_stats {
+    //
+    //     let table: &PrefixLookupTable = index.get_lookup_table();
+    //     let ranges = &table.ranges();
+    //     let total_size = table.size_bytes();
+    //     println!("Prefix table length: {}", ranges.len());
+    //     println!("Prefix table size (B): {}B", total_size);
+    //     println!("Prefix table size (KB): {}KB", total_size as f64/1000.0);
+    //     println!("Prefix table size (MB): {}MB", total_size as f64 /1000000.0);
+    //     println!("Prefix table size (GB): {}GB", (total_size as f64 )/ 1000000000.0);
+    //     let table = index.get_lookup_table();
+    //     let ranges = &table.ranges();
+    //     let mut max_diff = 0;
+    //     let mut min_start  =usize::MAX;
+    //     let mut max_end = 0;
+    //     let mut ten = [0u64; 21];
+    //     let one_hundredth = ranges.len() / 500;
+    //     let breakpoint = one_hundredth;
+    //     let mut zeros = 0;
+    //     let mut i = 0;
+    //     let mut zero = false;
+    //     let mut zero_prints = 0;
+    //     for range in ranges {
+    //         let diff = range.end - range.start;
+    //         max_diff = max(diff, max_diff);
+    //         if range.start != 0 {
+    //             min_start = min(range.start, min_start);
+    //         }
+    //         max_end = max(range.end, max_end);
+    //         if range.start == 0{
+    //             zeros += 1;
+    //             ten[0] += 1;
+    //             zero = true            }
+    //         i+=1;
+    //         if i > breakpoint {
+    //             i = 0;
+    //             print!("{:}% ({}/{}), ", ((zeros as f32 / breakpoint as f32)* 100f32).floor(), zeros, one_hundredth);
+    //             zero_prints+=1;
+    //             if zero_prints >= 7 {
+    //                 println!("");
+    //                 zero_prints = 0;
+    //             }
+    //             zeros = 0;
+    //         }
+    //         if zero == false {
+    //             ten[(range.start).ilog10() as usize + 1] += 1;
+    //         }
+    //         zero = false;
+    //     }
+    //     println!("");
+    //
+    //     let mut i = 0;
+    //     for t in ten {
+    //         let mut num = 0;
+    //         if i > 0 {
+    //             num = 10u64.pow(i-1);
+    //         }
+    //         println!("{: <10} - {}", num, t);
+    //         i += 1;
+    //     }
+    //     println!("max_diff: {}", max_diff);
+    //     println!("min start: {}", min_start);
+    //     println!("max end: {}", max_end);
+    // }
+    // if prefix_print {
+    //     let table = index.get_lookup_table();
+    //     let ranges = &table.ranges;
+    //
+    //     let mut prev = 0i32;
+    //     let mut count = 0;
+    //     for range in ranges {
+    //         let diff = range.end - range.start;
+    //         let rs = format!("[{}, {})", range.start, range.end);
+    //         println!("{: <30}| diff: {: <10} | delta: {: <10}", rs, diff, range.start as i32 - prev);
+    //         prev = range.start as i32;
+    //         count +=1;
+    //         if count > 20 {
+    //             break;
+    //         }
+    //     }
+    // }
 
     println!("Number of k-mers: {}", index.n_kmers());
     println!("Number of sbwt sets: {}", index.n_sets());
+    let table = index.get_lookup_table();
+    println!("Prefix table type: {}", table.kind());
+    println!("Prefix table prefix length: {}", table.prefix_length());
+    println!("Prefix table size on disk: {} bytes", table.size_bytes());
+}
+
+/// The `--prefix-table` argument, choosing the prefix lookup table implementation.
+/// Accepts the names in [PrefixTableKind::NAMES] and parses to a [PrefixTableKind].
+fn prefix_table_arg() -> clap::Arg {
+    use clap::builder::TypedValueParser;
+    clap::Arg::new("prefix-table")
+        .long("prefix-table")
+        .value_parser(
+            clap::builder::PossibleValuesParser::new(PrefixTableKind::NAMES)
+                .map(|s| s.parse::<PrefixTableKind>().unwrap()) // Can't fail: only listed names get here
+        )
 }
 
 fn build_subcommand() -> clap::Command {
@@ -1353,11 +1403,14 @@ fn build_subcommand() -> clap::Command {
             .long("add-all-dummy-paths")
             .action(clap::ArgAction::SetTrue))
         .arg(clap::Arg::new("prefix-precalc-length")
-            .help("Prefix precalc lookup table prefix length p. Larger p speeds up queries, but the table takes 4^(p+2) bytes of space.")
+            .help("Prefix precalc lookup table prefix length p. Larger p speeds up queries, but the table grows as 4^p (the vector table takes 4^(p+2) bytes).")
             .long("prefix-precalc")
             .short('p')
             .default_value("8")
-            .value_parser(clap::value_parser!(usize)));
+            .value_parser(clap::value_parser!(usize)))
+        .arg(prefix_table_arg()
+            .help("Prefix precalc lookup table implementation. Stored in the index, and kept by commands that build new indexes from it.")
+            .default_value(PrefixTableKind::default().name()));
 
     #[cfg(feature = "libsais")]
     {
@@ -1440,6 +1493,9 @@ fn main() {
                 .long("prefix-precalc")
                 .short('p')
                 .value_parser(clap::value_parser!(usize))
+            )
+            .arg(prefix_table_arg()
+                .help("Disregard the precalc table that is stored in the index, and compute a new table of this type. Without this, the stored type is kept.")
             )
             .arg(clap::Arg::new("json-out")
                 .help("The results are written to this file in JSON format.")
@@ -1955,6 +2011,17 @@ fn main() {
                 .required(true)
                 .value_parser(clap::value_parser!(usize))
             )
+            .arg(clap::Arg::new("prefix-precalc-length")
+                .help("Prefix precalc lookup table prefix length p. Larger p speeds up queries, but the table grows as 4^p (the vector table takes 4^(p+2) bytes).")
+                .long("prefix-precalc")
+                .short('p')
+                .default_value("8")
+                .value_parser(clap::value_parser!(usize))
+            )
+            .arg(prefix_table_arg()
+                .help("Prefix precalc lookup table implementation.")
+                .default_value(PrefixTableKind::default().name())
+            )
         )
         ;
 
@@ -1972,7 +2039,7 @@ fn main() {
     // a more verbose INFO level. Unfortunately the log crate interface does not support
     // multiple kinds of INFO-level messages, so we have this workaround.
     builder.format(|buf, record| {
-        
+
         let style = match record.level() {
             log::Level::Debug => buf.default_level_style(log::Level::Info), // Use INFO level styling for DEBUG messages
             _ => buf.default_level_style(record.level()),
@@ -2017,5 +2084,5 @@ fn main() {
         Some(("check-set-operation", sub_matches)) => check_set_operation_command(sub_matches),
         _ => unreachable!(),
     }
-    
+
 }

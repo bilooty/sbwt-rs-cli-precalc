@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::str::FromStr;
 
-use crate::precalc::{PrefixLookupTable};
+use crate::precalc::PrefixTableKind;
 use crate::sbwt::SbwtIndex;
 use crate::streaming_index::LcsArray;
 use crate::tempfile::TempFileManager;
@@ -23,6 +23,7 @@ pub struct BitPackedKmerSortingDisk<SS: SeqStream + Send> {
     add_rev_comp: bool,
     build_select_support: bool,
     precalc_length: usize,
+    prefix_table_kind: PrefixTableKind,
     add_all_dummy_paths: bool,
 }
 
@@ -36,10 +37,11 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingDisk<SS> {
     /// - no reverse complements added
     /// - no select support
     /// - precalc length min(8,k)
+    /// - the default prefix table kind (see [PrefixTableKind])
     /// - add_all_dummy_paths = false
     /// - dedup_batches = false
     pub fn new(input: SS, k: usize) -> Self {
-        Self{input, dedup_batches: false, mem_gb: 8, k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), add_all_dummy_paths: false, temp_dir: std::path::PathBuf::from_str(".").unwrap()}
+        Self{input, dedup_batches: false, mem_gb: 8, k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), prefix_table_kind: PrefixTableKind::default(), add_all_dummy_paths: false, temp_dir: std::path::PathBuf::from_str(".").unwrap()}
     }
 
     /// Set the amount of memory to use in gigabytes. This is not strictly enforced, but the algorithm will try to stay within this limit.
@@ -91,6 +93,12 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingDisk<SS> {
         self
     }
 
+    /// Set which prefix lookup table implementation to build. See [PrefixTableKind].
+    pub fn prefix_table_kind(mut self, kind: PrefixTableKind) -> Self {
+        self.prefix_table_kind = kind;
+        self
+    }
+
     /// Set the number of threads to use.
     pub fn n_threads(mut self, n_threads: usize) -> Self {
         self.n_threads = n_threads;
@@ -135,9 +143,9 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingDisk<SS> {
             sbwt.build_select();
         }
 
-        if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
-            sbwt.set_lookup_table(lut);
+        let lut = sbwt.get_lookup_table();
+        if lut.prefix_length() != self.precalc_length || lut.kind() != self.prefix_table_kind {
+            sbwt.rebuild_lookup_table(self.prefix_table_kind, self.precalc_length);
         }
 
         (sbwt, lcs)
@@ -191,6 +199,7 @@ pub struct BitPackedKmerSortingMem<SS: SeqStream + Send>{
     add_rev_comp: bool,
     build_select_support: bool,
     precalc_length: usize,
+    prefix_table_kind: PrefixTableKind,
     add_all_dummy_paths: bool,
 }
 
@@ -203,10 +212,11 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingMem<SS> {
     /// - no reverse complements added
     /// - no select support
     /// - precalc length min(8,k)
+    /// - the default prefix table kind (see [PrefixTableKind])
     /// - add_all_dummy_paths = false
     /// - dedup_batches = false
     pub fn new(input: SS, k: usize) -> Self {
-        Self{input, dedup_batches: false, mem_gb: 8, k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), add_all_dummy_paths: false}
+        Self{input, dedup_batches: false, mem_gb: 8, k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), prefix_table_kind: PrefixTableKind::default(), add_all_dummy_paths: false}
     }
 
     /// Whether to deduplicate k-mer batches before sorting. If the input has many duplicate k-mers, this will reduce the disk space required by the algorithm.
@@ -216,7 +226,7 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingMem<SS> {
     }
 
     /// Set the amount of memory to use in gigabytes. The deduplication buffer sizes will be tuned to try to
-    /// stay within this memory, but there are no guarantees. 
+    /// stay within this memory, but there are no guarantees.
     pub fn mem_gb(mut self, mem_gb: usize) -> Self {
         self.mem_gb = mem_gb;
         self
@@ -249,6 +259,12 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingMem<SS> {
     /// Set the length of the prefix in the prefix lookup table.
     pub fn precalc_length(mut self, precalc_length: usize) -> Self {
         self.precalc_length = precalc_length;
+        self
+    }
+
+    /// Set which prefix lookup table implementation to build. See [PrefixTableKind].
+    pub fn prefix_table_kind(mut self, kind: PrefixTableKind) -> Self {
+        self.prefix_table_kind = kind;
         self
     }
 
@@ -295,9 +311,9 @@ impl<SS: SeqStream + Send> BitPackedKmerSortingMem<SS> {
             sbwt.build_select();
         }
 
-        if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
-            sbwt.set_lookup_table(lut);
+        let lut = sbwt.get_lookup_table();
+        if lut.prefix_length() != self.precalc_length || lut.kind() != self.prefix_table_kind {
+            sbwt.rebuild_lookup_table(self.prefix_table_kind, self.precalc_length);
         }
 
         (sbwt, lcs)
@@ -374,6 +390,7 @@ pub struct BuildByBoundedSuffixSort<SS: SeqStream + Send> {
     add_rev_comp: bool,
     build_select_support: bool,
     precalc_length: usize,
+    prefix_table_kind: PrefixTableKind,
     add_all_dummy_paths: bool,
 }
 
@@ -387,10 +404,11 @@ impl<SS: SeqStream + Send> BuildByBoundedSuffixSort<SS> {
     /// - no reverse complements added
     /// - no select support
     /// - precalc length min(8,k)
+    /// - the default prefix table kind (see [PrefixTableKind])
     /// - add_all_dummy_paths = false
     /// - bucket sort prefix length 4
     pub fn new(input: SS, k: usize) -> Self {
-        Self{input, stream_suffix_array_from_disk: false, temp_dir: std::path::PathBuf::from("."), prefix_length_for_bucket_sort: 4, k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), add_all_dummy_paths: false}
+        Self{input, stream_suffix_array_from_disk: false, temp_dir: std::path::PathBuf::from("."), prefix_length_for_bucket_sort: 4, k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), prefix_table_kind: PrefixTableKind::default(), add_all_dummy_paths: false}
     }
 
     /// Set the length of the prefix used to bucket the contexts before sorting them.
@@ -442,6 +460,12 @@ impl<SS: SeqStream + Send> BuildByBoundedSuffixSort<SS> {
         self
     }
 
+    /// Set which prefix lookup table implementation to build. See [PrefixTableKind].
+    pub fn prefix_table_kind(mut self, kind: PrefixTableKind) -> Self {
+        self.prefix_table_kind = kind;
+        self
+    }
+
     /// Set the number of threads to use.
     pub fn n_threads(mut self, n_threads: usize) -> Self {
         self.n_threads = n_threads;
@@ -484,9 +508,9 @@ impl<SS: SeqStream + Send> BuildByBoundedSuffixSort<SS> {
             sbwt.build_select();
         }
 
-        if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
-            sbwt.set_lookup_table(lut);
+        let lut = sbwt.get_lookup_table();
+        if lut.prefix_length() != self.precalc_length || lut.kind() != self.prefix_table_kind {
+            sbwt.rebuild_lookup_table(self.prefix_table_kind, self.precalc_length);
         }
 
         (sbwt, lcs)
@@ -546,6 +570,7 @@ pub struct BuildByLibsais<SS: SeqStream + Send> {
     add_rev_comp: bool,
     build_select_support: bool,
     precalc_length: usize,
+    prefix_table_kind: PrefixTableKind,
     add_all_dummy_paths: bool,
 }
 
@@ -558,9 +583,10 @@ impl<SS: SeqStream + Send> BuildByLibsais<SS> {
     /// - no reverse complements added
     /// - no select support
     /// - precalc length min(8,k)
+    /// - the default prefix table kind (see [PrefixTableKind])
     /// - add_all_dummy_paths = false
     pub fn new(input: SS, k: usize) -> Self {
-        Self{input, stream_suffix_array_from_disk: false, temp_dir: std::path::PathBuf::from("."), k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), add_all_dummy_paths: false}
+        Self{input, stream_suffix_array_from_disk: false, temp_dir: std::path::PathBuf::from("."), k, n_threads: 4, build_lcs: false, add_rev_comp: false, build_select_support: false, precalc_length: std::cmp::min(8, k), prefix_table_kind: PrefixTableKind::default(), add_all_dummy_paths: false}
     }
 
     /// Whether to stream the suffix array from disk.
@@ -603,6 +629,12 @@ impl<SS: SeqStream + Send> BuildByLibsais<SS> {
     /// Set the length of the prefix in the prefix lookup table.
     pub fn precalc_length(mut self, precalc_length: usize) -> Self {
         self.precalc_length = precalc_length;
+        self
+    }
+
+    /// Set which prefix lookup table implementation to build. See [PrefixTableKind].
+    pub fn prefix_table_kind(mut self, kind: PrefixTableKind) -> Self {
+        self.prefix_table_kind = kind;
         self
     }
 
@@ -653,9 +685,9 @@ impl<SS: SeqStream + Send> BuildByLibsais<SS> {
             sbwt.build_select();
         }
 
-        if sbwt.get_lookup_table().prefix_length != self.precalc_length {
-            let lut = PrefixLookupTable::new(&sbwt, self.precalc_length);
-            sbwt.set_lookup_table(lut);
+        let lut = sbwt.get_lookup_table();
+        if lut.prefix_length() != self.precalc_length || lut.kind() != self.prefix_table_kind {
+            sbwt.rebuild_lookup_table(self.prefix_table_kind, self.precalc_length);
         }
 
         (sbwt, lcs)

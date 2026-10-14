@@ -2,8 +2,8 @@
 
 use std::io::Write;
 
-use crate::precalc::{PrefixLookupTable};
 use crate::{compact_int_vector::CompactIntVector, dbg::Dbg, LcsArray, SbwtIndex, StreamingIndex, SubsetCorrectionSets, SubsetMatrix, SubsetSeq};
+use crate::precalc::{PrefixLookupTable, PrefixTableKind};
 
 /// An enum listing SbwtIndex types built on different subset rank implementations provided in this crate.
 pub enum SbwtIndexVariant {
@@ -109,12 +109,16 @@ impl SbwtIndexVariant {
         }
     }
 
-    pub fn build_lookup_table(&self, prefix_len: usize) -> PrefixLookupTable {
+    /// Builds a prefix lookup table of the given kind and prefix length for this index, without installing it.
+    pub fn build_lookup_table(&self, prefix_len: usize, kind: PrefixTableKind) -> PrefixLookupTable {
         match self {
-            SbwtIndexVariant::SubsetMatrix(sbwt_index) => PrefixLookupTable::new(sbwt_index, prefix_len),
-            SbwtIndexVariant::SubsetCorrectionSets(sbwt_index) => PrefixLookupTable::new(sbwt_index, prefix_len),
+            SbwtIndexVariant::SubsetMatrix(sbwt_index) => PrefixLookupTable::new_with_kind(kind, sbwt_index, prefix_len),
+            SbwtIndexVariant::SubsetCorrectionSets(sbwt_index) => PrefixLookupTable::new_with_kind(kind, sbwt_index, prefix_len),
         }
     }
+
+    /// See [SbwtIndex::rebuild_lookup_table].
+    pub fn rebuild_lookup_table(&mut self, kind: PrefixTableKind, prefix_len: usize) { forward!(self, rebuild_lookup_table(kind, prefix_len)) }
 
     /// Serializes an index that is wrapped in an enum describing the used subset rank structure type.
     /// The format includes a type identifier so the correct variant can later be loaded with [SbwtIndexVariant::load].

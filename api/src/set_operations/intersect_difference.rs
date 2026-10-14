@@ -10,8 +10,9 @@ use crate::builder::BitPackedKmerSortingMem;
 use crate::subsetseq::*;
 use crate::sbwt::*;
 use crate::atomic_bitmap::AtomicBitmap;
+use crate::precalc::{PrefixTableKind, PrefixTableVariant};
 use super::interleaving::{MergeInterleaving, ThreeWayInterleaving,
-    compute_piece_ranges, compute_piece_ranges_three_way, count_result_nodes_per_piece};
+                          compute_piece_ranges, compute_piece_ranges_three_way, count_result_nodes_per_piece};
 use super::common::{allocate_rows, transpose_and_concat_pieces, build_index,
     word_and_popcount_range, word_diff_popcount_range};
 
@@ -40,7 +41,7 @@ fn convert_index<SS: SubsetSeq>(idx: SbwtIndex<SubsetMatrix>, n_threads: usize, 
         }).collect()
     });
 
-    build_index::<SS>(new_rows, n_kmers, k, n_threads, precalc_length)
+    build_index::<SS>(new_rows, n_kmers, k, n_threads, precalc_length, idx.get_lookup_table().kind())
 }
 
 /// Counts the number of result positions and dummy result positions using
@@ -649,7 +650,7 @@ pub fn intersect<SS: SubsetSeq + Send + Sync + Clone>(
     optimize_peak_ram: bool,
     n_threads: usize,
 ) -> Result<SbwtIndex<SS>, MissingSelectSupport> {
-
+    let table_kind = index1.get_lookup_table().kind();
     if !index1.sbwt().has_select_support() {
         return Err(MissingSelectSupport)
     }
@@ -719,7 +720,7 @@ pub fn intersect<SS: SubsetSeq + Send + Sync + Clone>(
     };
 
     log::info!("[intersect] Building subset rank structure");
-    Ok(build_index(new_rows, n_kmers, k, n_threads, new_prefix_lookup_table_length))
+    Ok(build_index(new_rows, n_kmers, k, n_threads, new_prefix_lookup_table_length, table_kind))
 }
 
 // ── difference helpers ──────────────────────────────────────────────────────
@@ -1010,7 +1011,7 @@ pub fn difference<SS: SubsetSeq + Send + Sync + Clone>(
     optimize_peak_ram: bool,
     n_threads: usize,
 ) -> Result<SbwtIndex<SS>, MissingSelectSupport> {
-
+    let table_kind = index1.get_lookup_table().kind();
     if !index1.sbwt().has_select_support() {
         return Err(MissingSelectSupport)
     }
@@ -1083,6 +1084,6 @@ pub fn difference<SS: SubsetSeq + Send + Sync + Clone>(
     };
 
     log::info!("[difference] Building subset rank structure");
-    Ok(build_index(new_rows, n_kmers, k, n_threads, new_prefix_lookup_table_length))
+    Ok(build_index(new_rows, n_kmers, k, n_threads, new_prefix_lookup_table_length, table_kind))
 }
 

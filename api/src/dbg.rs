@@ -462,6 +462,7 @@ mod tests {
         let (sbwt_1, _) = BitPackedKmerSortingMem::new_from_slices(seqs_1, k).build_lcs(true).run();
         let (sbwt_2, _) = BitPackedKmerSortingMem::new_from_slices(seqs_2, k).build_lcs(true).run();
         let merge_plan = crate::MergeInterleaving::new(&sbwt_1, &sbwt_2, true, 3);
+        let kind = sbwt_1.get_lookup_table().kind();
         let mut sbwt_merged = crate::merge(Arc::new(sbwt_1), Arc::new(sbwt_2), Arc::new(merge_plan), 0, 3);
         sbwt_merged.build_select();
 

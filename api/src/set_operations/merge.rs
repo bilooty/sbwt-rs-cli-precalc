@@ -1,6 +1,6 @@
 use super::common::{allocate_rows, build_index, transpose_and_concat_pieces};
 use super::interleaving::{compute_piece_ranges, MergeInterleaving};
-use crate::precalc::PrefixLookupTable;
+use crate::precalc::{PrefixLookupTable, PrefixTableKind};
 use crate::sbwt::*;
 use crate::subsetseq::*;
 use bitvec::prelude::*;
@@ -187,9 +187,10 @@ pub fn merge<SS: SubsetSeq + Send + Sync>(
     index1: Arc<SbwtIndex<SS>>,
     index2: Arc<SbwtIndex<SS>>,
     interleaving: Arc<MergeInterleaving>,
-    new_prefix_lookup_table_length: usize,
+    new_prefix_lookup_table_length: usize, 
     n_threads: usize,
 ) -> SbwtIndex<SS> {
+    let kind = index1.get_lookup_table().kind();
     let sigma = crate::util::DNA_ALPHABET.len();
 
     assert!(index1.k() == index2.k());
@@ -240,13 +241,26 @@ pub fn merge<SS: SubsetSeq + Send + Sync>(
                  {} in-edge(s) + root != {} sets; {} node(s) have no in-coming edge",
                 total_in_edges, stripped_len, stripped_len - 1 - total_in_edges);
         }
-        let result = build_index(new_rows, n_kmers, k, n_threads, new_prefix_lookup_table_length);
+        let result = build_index(
+            new_rows,
+            n_kmers,
+            k, n_threads,
+            new_prefix_lookup_table_length,
+            kind,
+        );
         #[cfg(debug_assertions)]
         debug_assert_sbwt_invariant(&result, "[merge/strip]");
         result
     } else {
         drop(interleaving);
-        let result = build_index(new_rows, n_kmers, k, n_threads, new_prefix_lookup_table_length);
+        let result = build_index(
+            new_rows,
+            n_kmers,
+            k,
+            n_threads,
+            new_prefix_lookup_table_length,
+            kind,
+        );
         #[cfg(debug_assertions)]
         debug_assert_sbwt_invariant(&result, "[merge]");
         result

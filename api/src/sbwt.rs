@@ -15,7 +15,7 @@ use rayon::iter::ParallelIterator;
 
 use crate::compact_int_vector::CompactIntVector;
 use crate::compact_int_vector::CompactIntVectorMutSlice;
-use crate::precalc::{PrefixLookupTable};
+use crate::precalc::{PrefixTableKind, PrefixTableVariant, VectorLookupTable};
 use crate::sdsl_compatibility::load_known_width_sdsl_int_vector;
 use crate::sdsl_compatibility::load_sdsl_bit_vector;
 use crate::subsetseq::*;
@@ -27,43 +27,43 @@ pub const CARGO_API_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The SBWT index data structure. Construct with [BitPackedKmerSortingMem](crate::BitPackedKmerSortingMem) or [BitPackedKmerSortingDisk](crate::BitPackedKmerSortingDisk). For the [SubsetSeq] trait implementation,  we recommend using the bit matrix implementation [SubsetMatrix].
 ///
-/// # SBWT index 
-/// 
+/// # SBWT index
+///
 /// The SBWT index is a compressed index for searching for k-mers in a set of k-mers. It can be seen a version of the
 /// FM-index on sets of k-mers. Here we give a brief overview of the data structure and key concepts that are
 /// helpful for understanding the API. For further details, see the [paper](https://doi.org/10.1137/1.9781611977714.20).
-/// 
+///
 /// ## SBWT graph
-/// 
+///
 /// To understand the SBWT index, it's helpful to first understand the SBWT graph.
 /// The node-centric de Bruijn graph of a set of k-mers R (also called *a k-spectrum*) is a directed graph where the nodes are the k-mers in R,
 /// and there is an edge from x to y if x[1..k) = y[0..k-1). The label of the edge is the last character of y.
 /// The **SBWT graph** is a modified version of the node-centric de Bruijn graph. There are two modifications:
-/// 1. We add a set R' of "dummy nodes". First, the **source set** R' ⊆ R is the subset of k-mers in R that 
-///    do not have an incoming edge in the de Bruijn graph, that is x ∈ R' iff x[0..k-1) is not the suffix of 
-///    any k-mer in R. The set of dummy nodes is the set of all proper prefixes of the k-mers in R'. We pad the 
-///    dummy nodes with dollar symbols from the left so that all dummy nodes have length k. The set R ∪ R' is called 
+/// 1. We add a set R' of "dummy nodes". First, the **source set** R' ⊆ R is the subset of k-mers in R that
+///    do not have an incoming edge in the de Bruijn graph, that is x ∈ R' iff x[0..k-1) is not the suffix of
+///    any k-mer in R. The set of dummy nodes is the set of all proper prefixes of the k-mers in R'. We pad the
+///    dummy nodes with dollar symbols from the left so that all dummy nodes have length k. The set R ∪ R' is called
 ///    the **padded k-spectrum**. We add all de Bruijn graph edges between overlaps of the padded k-spectrum, that is,
 ///    for every x ∈ R ∪ R' and y ∈ R ∪ R' such that x[1..k) = y[0..k-1), we add an edge from x to y in the SBWT graph.
 ///    As a special case, the empty string $^k is always included in R', and the incoming self-loop edge labeled with $ is not included.
-/// 2. For every node in R ∪ R' that has more than one incoming edge, we delete all incoming edges except the 
+/// 2. For every node in R ∪ R' that has more than one incoming edge, we delete all incoming edges except the
 ///    one that comes from the colexicographically smallest k-mer. A k-mer x is colexicographically smaller than k-mer y iff the reverse of x is lexicographically smaller than the reverse of y.
-/// 
-/// 
-/// For example, below is the SBWT graph of all 4-mers of strings ["TGTTTG", "TTGCTAT", "ACGTAGTATAT", "TGTAAA"].
-/// The source node set is shown in blue, the dummy node set R' in orange, and the de Bruijn graph edges that 
-/// have been removed are shown in red.
-/// 
-/// ![SBWT graph][sbwt_graph] 
-/// 
-/// ## SBWT definition
-/// 
-/// The SBWT is a sequence of subsets of {A,C,G,T} such that the i-th subset contains the edge labels of outgoing
-/// edges from the i-th k-mer in the SBWT graph in colexicographic order of the k-mers. 
-/// If we take the example from above and stack the nodes in colexicographic order, we get: 
 ///
-/// ![SBWT graph][sbwt_sequence] 
-/// 
+///
+/// For example, below is the SBWT graph of all 4-mers of strings ["TGTTTG", "TTGCTAT", "ACGTAGTATAT", "TGTAAA"].
+/// The source node set is shown in blue, the dummy node set R' in orange, and the de Bruijn graph edges that
+/// have been removed are shown in red.
+///
+/// ![SBWT graph][sbwt_graph]
+///
+/// ## SBWT definition
+///
+/// The SBWT is a sequence of subsets of {A,C,G,T} such that the i-th subset contains the edge labels of outgoing
+/// edges from the i-th k-mer in the SBWT graph in colexicographic order of the k-mers.
+/// If we take the example from above and stack the nodes in colexicographic order, we get:
+///
+/// ![SBWT graph][sbwt_sequence]
+///
 /// The SBWT subset sequence in this example is the sequence of outgoing edge label sets read from top to bottom:
 /// {A,T}, {C}, {}, {A}, {T}, {T}, {A,G,T}, {}, {}, {G}, {T}, {T}, {T}, {T}, {C}, {G}, {A}, {}, {}, {A}, {A}, {A}, {A,T}, {T}, {G}.
 /// The key property that makes the SBWT index work is that the i-th outgoing edge with a given label on the right column
@@ -71,7 +71,7 @@ pub const CARGO_API_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Thanks to this property, once the subset sequnce has been constructed, the k-mers
 /// and the graph can be discarded, with no loss of information. That is, the k-mers and the graph can be reconstructed from the
 /// subset sequence alone.
-/// 
+///
 /// Given the subset sequence, there is also an algorithm to search for a k-mer in O(k) time. The algorithm is essentially the same
 /// as the search algorithm on the FM-index. Given a k-mer P[0..k], at iteration i, we have the range of rows in the picture whose
 /// k-mers have P[0..i) as a suffix. When i = 0, we have the empty suffix P[0..0), which is a suffix of all k-mers.
@@ -79,12 +79,12 @@ pub const CARGO_API_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// mentioned above, as shown in the figure below for query k-mer TATA. This update step can be implemented efficiently by preprocessing the SBWT set sequence for
 /// *subset rank queries*. See [this paper](https://doi.org/10.1137/1.9781611977714.20) for more on how to implement these rank queries. We provide
 /// an implementation based on a bit matrix at [SubsetMatrix]. Any struct implementing the [SubsetSeq] trait can be used to query the SBWT.
-///  
-/// ![SBWT graph][sbwt_search] 
-/// 
-/// 
-#[embed_doc_image::embed_doc_image("sbwt_graph", "doc_images/sbwt_graph.svg")] 
-#[embed_doc_image::embed_doc_image("sbwt_sequence", "doc_images/sbwt_figure.drawio.svg")] 
+///
+/// ![SBWT graph][sbwt_search]
+///
+///
+#[embed_doc_image::embed_doc_image("sbwt_graph", "doc_images/sbwt_graph.svg")]
+#[embed_doc_image::embed_doc_image("sbwt_sequence", "doc_images/sbwt_figure.drawio.svg")]
 #[embed_doc_image::embed_doc_image("sbwt_search", "doc_images/sbwt_figure_with_search.drawio.png")] // This is as .png because there is a bug in vertical centering in the svg export of drawio.
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -94,7 +94,7 @@ pub struct SbwtIndex<SS: SubsetSeq> {
     n_kmers: usize,
     k: usize,
     C: Vec<usize>, // Cumulative character counts (includes one ghost dollar)
-    prefix_lookup_table: PrefixLookupTable,
+    prefix_lookup_table: PrefixTableVariant,
 }
 
 
@@ -110,7 +110,7 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
     // 00000000  0c 00 00 00 00 00 00 00  70 6c 61 69 6e 2d 6d 61  |........plain-ma|
     // 00000010  74 72 69 78 04 00 00 00  00 00 00 00 76 30 2e 31  |trix........v0.1|
     // 00000020  b6 09 2c 0f 00 00 00 00  ff ff ff 8b 48 44 2a 95  |..,.........HD*.|
-    
+
     // We only support type-id "plain-matrix" and version v0.1.
 
     // The file format of the raw API is:
@@ -131,7 +131,7 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
     let mut string_buf = vec![0u8; string_length as usize];
     input.read_exact(&mut string_buf).unwrap();
 
-    if string_buf == SUPPORTED_CPP_SBWT_VARIANT { 
+    if string_buf == SUPPORTED_CPP_SBWT_VARIANT {
         // Ok. Ignore and read the next string.
 
         string_length = input.read_u64::<LittleEndian>().unwrap();
@@ -142,8 +142,8 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
         input.read_exact(&mut string_buf).unwrap();
     }
 
-    if string_buf == SUPPORTED_CPP_FILE_FORMAT { 
-        // Ok. Proceed to deserialize. 
+    if string_buf == SUPPORTED_CPP_FILE_FORMAT {
+        // Ok. Proceed to deserialize.
 
         log::info!("Reading bit vectors");
         let A_bits = load_sdsl_bit_vector(input)?;
@@ -154,7 +154,7 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
         let _A_rank_support = load_known_width_sdsl_int_vector(input, 64)?; // Ignore: we build our own
         let _C_rank_support = load_known_width_sdsl_int_vector(input, 64)?; // Ignore: we build our own
         let _G_rank_support = load_known_width_sdsl_int_vector(input, 64)?; // Ignore: we build our own
-        let _T_rank_support = load_known_width_sdsl_int_vector(input, 64)?; // Ignore: we build our own 
+        let _T_rank_support = load_known_width_sdsl_int_vector(input, 64)?; // Ignore: we build our own
 
         let _suffix_group_starts = load_sdsl_bit_vector(input); // Ignore: we don't use this
 
@@ -215,8 +215,9 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
         let mut subset_rank = SubsetMatrix::new_from_bit_vectors(vec![A_bits, C_bits, G_bits, T_bits]);
         subset_rank.build_rank();
 
-        let prefix_lut = PrefixLookupTable {ranges, prefix_length: precalc_k, size_bytes: 0};
-
+        let prefix_lut = PrefixTableVariant::Vector(VectorLookupTable {
+            ranges, prefix_length: precalc_k, size_bytes: 0,
+        });
         Ok(SbwtIndex::from_parts(subset_rank, n_kmers, k, C_array, prefix_lut))
 
     } else {
@@ -226,8 +227,8 @@ pub fn load_from_cpp_plain_matrix_format<R: std::io::Read>(input: &mut R) -> std
 }
 
 
-// When non-compatible changes to the serialization format occur, update the version number here to the current version 
-const SERIALIZATION_MAGIC_STRING: &[u8] = b"sbwtfile-v0.3.0"; 
+// When non-compatible changes to the serialization format occur, update the version number here to the current version
+const SERIALIZATION_MAGIC_STRING: &[u8] = b"sbwtfile-v0.4.0";
 
 impl<SS: SubsetSeq> SbwtIndex<SS> {
 
@@ -301,7 +302,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
                 .collect::<Vec<u8>>(),
         )?;
 
-        n_written += self.prefix_lookup_table.serialize(out)?; 
+        n_written += self.prefix_lookup_table.serialize(out)?;
 
         Ok(n_written)
     }
@@ -335,7 +336,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
             })
             .collect::<Vec<usize>>();
 
-        let prefix_lookup_table = PrefixLookupTable::load(input)?;
+        let prefix_lookup_table = PrefixTableVariant::load(input)?;
 
         let index = Self {
             sbwt: subset_rank,
@@ -349,8 +350,8 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
 
     }
 
-    /// Returns the edge label on the incoming edge to the i-th node in colexicographic order 
-    /// in the SBWT graph (not the same graph as the de Bruijn graph!), or None if the node has 
+    /// Returns the edge label on the incoming edge to the i-th node in colexicographic order
+    /// in the SBWT graph (not the same graph as the de Bruijn graph!), or None if the node has
     /// no incoming edge. This is well-defined since every node in the SBWT graph has at most 1 incoming edge.
     pub fn inlabel(&self, i: usize) -> Option<u8> {
         if i == 0 {
@@ -418,7 +419,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
             }
         }
         buf[buf_start..buf_start+self.k].reverse();
-    } 
+    }
 
     /// Requires that the [select support](SbwtIndex::build_select) has been built.
     /// Accesses the k-mer associated with the node with colexicographic rank
@@ -434,7 +435,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
     /// Returns the colexicographic interval of the pattern, if found.
     /// The pattern is given in ascii characters.
     pub fn search(&self, pattern: &[u8]) -> Option<std::ops::Range<usize>> {
-        let l = self.prefix_lookup_table.prefix_length;
+        let l = self.prefix_lookup_table.prefix_length();
         match pattern.len() >= l {
             true => {
                 // Initialize search from lookup table
@@ -442,7 +443,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
                 self.search_from(I, &pattern[l..])
             },
             false => {
-                // Search from scratch 
+                // Search from scratch
                 self.search_from(0_usize..self.sbwt.len(), pattern)
             }
         }
@@ -476,7 +477,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
     /// Reconstruct all k-mers in the [padded k-spectrum](#sbwt-graph) in the data structure.
     /// The reconstructed k-mers concatenated into a single ascii string in colexicographic order.
     /// The i-th k-mer starts at position i*k in the string.
-    pub fn reconstruct_padded_spectrum(&self, n_threads: usize) -> Vec<u8> 
+    pub fn reconstruct_padded_spectrum(&self, n_threads: usize) -> Vec<u8>
     where Self: Sync {
         let n_nodes = self.n_sets();
         let k = self.k;
@@ -506,13 +507,20 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
     }
 
     /// Set the prefix lookup table of the data structure.
-    pub fn set_lookup_table(&mut self, prefix_lookup_table: PrefixLookupTable){
+    pub fn set_lookup_table(&mut self, prefix_lookup_table: PrefixTableVariant){
         self.prefix_lookup_table = prefix_lookup_table;
     }
 
     /// Get the prefix lookup table of the data structure.
-    pub fn get_lookup_table(&self) -> &PrefixLookupTable {
+    pub fn get_lookup_table(&self) -> &PrefixTableVariant {
         &self.prefix_lookup_table
+    }
+
+    /// Replace the prefix lookup table with a freshly built one of the given kind and prefix length.
+    /// The current table is used to speed up the searches that build the new one.
+    pub fn rebuild_lookup_table(&mut self, kind: PrefixTableKind, prefix_length: usize) {
+        let table = PrefixTableVariant::new_with_kind(kind, self, prefix_length);
+        self.prefix_lookup_table = table;
     }
 
     /// Get the SBWT set sequence of the data structure.
@@ -522,26 +530,34 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
 
     /// Internal function: construct from parts.
     #[allow(non_snake_case)]
-    pub fn from_parts(subset_rank: SS, n_kmers: usize, k: usize, C: Vec<usize>, prefix_lookup_table: PrefixLookupTable) -> Self {
+    pub fn from_parts(subset_rank: SS, n_kmers: usize, k: usize, C: Vec<usize>, prefix_lookup_table: PrefixTableVariant) -> Self {
         Self {sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table}
     }
 
     // Returns the subset rank structure, the number of k-mers, k, the C-array and the prefix lookup table
-    pub fn into_parts(self) -> (SS, usize, usize, Vec<usize>, PrefixLookupTable) {
+    pub fn into_parts(self) -> (SS, usize, usize, Vec<usize>, PrefixTableVariant) {
         (self.sbwt, self.n_kmers, self.k, self.C, self.prefix_lookup_table)
     }
 
-    /// Construct from existing [`crate::subsetseq::SubsetSeq`].
+    /// Construct from existing [`crate::subsetseq::SubsetSeq`], with a prefix lookup table
+    /// of the default kind ([PrefixTableKind::default]). See [SbwtIndex::from_subset_seq_with_kind].
+    pub fn from_subset_seq(subset_rank: SS, n_kmers: usize, k: usize, precalc_prefix_length: usize) -> Self {
+        Self::from_subset_seq_with_kind(subset_rank, n_kmers, k, precalc_prefix_length, PrefixTableKind::default())
+    }
+
+    /// Construct from existing [`crate::subsetseq::SubsetSeq`], with a prefix lookup table
+    /// of the given kind and prefix length.
     #[allow(non_snake_case)]
-    pub fn from_subset_seq(mut subset_rank: SS, n_kmers: usize, k: usize, precalc_prefix_length: usize) -> Self {
+    pub fn from_subset_seq_with_kind(mut subset_rank: SS, n_kmers: usize, k: usize, precalc_prefix_length: usize, prefix_table_kind: PrefixTableKind) -> Self {
         if !subset_rank.has_rank_support() {
             log::info!("Building rank support");
             subset_rank.build_rank();
         }
         let C = subset_rank.get_C_array();
         let n = subset_rank.len();
-        let mut index = Self{sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table: PrefixLookupTable::new_empty(n)};
-        index.prefix_lookup_table = PrefixLookupTable::new(&index, precalc_prefix_length);
+        // The trivial table is a placeholder so that the searches building the real one work.
+        let mut index = Self{sbwt: subset_rank, n_kmers, k, C, prefix_lookup_table: PrefixTableVariant::new_empty(n)};
+        index.rebuild_lookup_table(prefix_table_kind, precalc_prefix_length);
 
         index
     }
@@ -559,7 +575,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
                 self.n_sets() - self.C[i]
             };
 
-            let (head, tail) = remaining_output_range.split_at_mut(range_length); 
+            let (head, tail) = remaining_output_range.split_at_mut(range_length);
             output_ranges.push(head);
             remaining_output_range = tail;
         }
@@ -571,7 +587,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
     /// The effect is this: if `labels_in` is a list of labels, one for each node in the SBWT in colex order, then the output
     /// is those labels pushed forward along the edges in the SBWT graph. Those nodes that do not have a predecessor
     /// (just the root of the graph) get a dollar.
-    pub fn push_all_labels_forward(&self, labels_in: &[u8], labels_out: &mut [u8], n_threads: usize) 
+    pub fn push_all_labels_forward(&self, labels_in: &[u8], labels_out: &mut [u8], n_threads: usize)
     where Self: Sync {
 
         labels_out[0] = b'$'; // The root has no predecessor so it always gets a dollar.
@@ -580,7 +596,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         let input_piece_len = self.n_sets().div_ceil(n_threads);
 
         // Subdivide char output ranges for threads.
-        // For each thread one input sbwt range and four (= |ACGT|) output ranges. 
+        // For each thread one input sbwt range and four (= |ACGT|) output ranges.
         let mut thread_input_output_ranges = Vec::<(std::ops::Range<usize>, Vec::<&mut[u8]>)>::new();
 
         for t in 0..n_threads {
@@ -596,13 +612,13 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
 
                 // The length of the output range is equal to the number of occurrences of the current character in the input range
                 let output_range_len = self.sbwt.rank(char_idx as u8, input_range_end) - self.sbwt.rank(char_idx as u8, input_range_start);
-                let (output_subrange, tail) = output_range.split_at_mut(output_range_len); 
+                let (output_subrange, tail) = output_range.split_at_mut(output_range_len);
                 range_tails.push(tail);
 
                 thread_output_subranges.push(output_subrange);
             }
             remaining_char_output_ranges = range_tails;
-            
+
             thread_input_output_ranges.push((input_subrange, thread_output_subranges));
         }
 
@@ -634,7 +650,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         }, self.n_sets()*DNA_ALPHABET.len());
 
         if j == self.n_sets() * DNA_ALPHABET.len() {
-            (self.n_sets(), DNA_ALPHABET.len()-1) // Due to the same special case as in the search 
+            (self.n_sets(), DNA_ALPHABET.len()-1) // Due to the same special case as in the search
         } else {
             (j % self.n_sets(), j / self.n_sets())
         }
@@ -644,7 +660,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
     /// compact integer vectors with elements {0,1, ..., 4}. The symbol 0 is the "dollar" and
     /// symbols 1,2,3,4 are A,C,G and T.
     /// (see the documentation of [SbwtIndex::push_all_labels_forward].
-    pub fn push_all_labels_forward_compact(&self, labels_in: &CompactIntVector<3>, labels_out: &mut CompactIntVector<3>, n_threads: usize) 
+    pub fn push_all_labels_forward_compact(&self, labels_in: &CompactIntVector<3>, labels_out: &mut CompactIntVector<3>, n_threads: usize)
     where Self: Sync {
 
         let output_char_ranges = labels_out.split_to_approx_even_mut_ranges(n_threads);
@@ -657,7 +673,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         for r in output_char_ranges.iter() {
             let input_range_len = if edges_so_far == 0 {
                 assert!(r.len() > 0);
-                r.len() - 1 // No incoming edge to the first node 
+                r.len() - 1 // No incoming edge to the first node
             } else {
                 r.len()
             };
@@ -665,7 +681,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
             let (r_e, c_e) = self.get_ith_edge(edges_so_far + input_range_len);
             edges_so_far += input_range_len;
             input_edge_ranges.push((r_s, c_s, r_e, c_e));
-        } 
+        }
 
         assert_eq!(output_char_ranges.len(), input_edge_ranges.len());
 
@@ -684,7 +700,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
             // If we don't return here then one of the asserts below will fail.
         }
 
-        let has_dollar = first_input_range; 
+        let has_dollar = first_input_range;
         if has_dollar {
             assert!(output_char_range.len() > 0);
             output_char_range.set(0,0); // The "dollar"
@@ -723,7 +739,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
 
 
     /// Internal function. Takes an input range in the SBWT, and a vector of labels (one for each position in the input range).
-    /// Output: writes the input labels to the output ranges. Read the code for details. 
+    /// Output: writes the input labels to the output ranges. Read the code for details.
     /// The length of output_ranges[j] must be equal to the number of occurrences of character j in the input range.
     pub(crate) fn push_labels_forward(&self, labels: &[u8], sbwt_input_range: std::ops::Range<usize>, output_ranges: Vec<&mut[u8]>){
         self.sbwt.push_labels_forward(labels, sbwt_input_range, output_ranges);
@@ -742,7 +758,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         }
         assert_eq!(last.len(), self.n_sets());
         last
-    } 
+    }
 
     /// Build the last column of the SBWT matrix.
     pub fn build_last_column_compact(&self) -> CompactIntVector<3> {
@@ -758,17 +774,17 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         }
         assert_eq!(cur_idx, self.n_sets());
         last
-    } 
+    }
 
     // Internal function: marks the first k-mer of every (k-1)-suffix group.
-    pub(crate) fn mark_k_minus_1_mers(&self, n_threads: usize) -> bitvec::vec::BitVec 
+    pub(crate) fn mark_k_minus_1_mers(&self, n_threads: usize) -> bitvec::vec::BitVec
     where Self: Sync {
         let n_nodes = self.n_sets();
         let k = self.k();
 
         // Build the last column of the SBWT matrix
         log::info!("Building column {} of the SBWT matrix", k-1);
-        let mut labels_in = self.build_last_column(); 
+        let mut labels_in = self.build_last_column();
         let mut labels_out = labels_in.clone();
 
         let mut marks = bitvec::bitvec![0; self.n_sets()];
@@ -800,7 +816,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         let mut dfs_stack = Vec::<(usize, usize)>::new(); // Node, depth
         dfs_stack.push((0,0)); // Colex rank of $, depth of $
         let mut outlabels = Vec::<u8>::new();
-        while let Some((v, depth)) = dfs_stack.pop() { 
+        while let Some((v, depth)) = dfs_stack.pop() {
             outlabels.clear();
             self.sbwt.append_set_to_buf(v, &mut outlabels);
             dummy_marks.set(v, true);
@@ -814,7 +830,7 @@ impl<SS: SubsetSeq> SbwtIndex<SS> {
         }
 
         dummy_marks
-    } 
+    }
 
 }
 
@@ -842,12 +858,12 @@ mod tests {
             .map(|c| ACGT_to_0123(*c))
             .collect::<Vec<u8>>()
     }
-    
+
     #[test_log::test]
     #[allow(non_snake_case)]
     fn doc_example() {
         // The example used in the documentation page for SbwtIndex.
-        let seqs: Vec<&[u8]> = vec![b"TGTTTG", b"TTGCTAT", b"ACGTAGTATAT", b"TGTAAA"]; 
+        let seqs: Vec<&[u8]> = vec![b"TGTTTG", b"TTGCTAT", b"ACGTAGTATAT", b"TGTAAA"];
         let (sbwt, _) = BitPackedKmerSortingMem::new_from_slices(&seqs, 4).run();
         let mut doc_sbwt = vec![vec![b'A',b'T'], vec![b'C'], vec![], vec![b'A'], vec![b'T'], vec![b'T'], vec![b'A',b'G',b'T'], vec![], vec![], vec![b'G'], vec![b'T'], vec![b'T'], vec![b'T'], vec![b'T'], vec![b'C'], vec![b'G'], vec![b'A'], vec![], vec![], vec![b'A'], vec![b'A'], vec![b'A'], vec![b'A',b'T'], vec![b'T'], vec![b'G']];
 
@@ -935,7 +951,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn non_ACGT(){
-        let seqs: Vec<&[u8]> = vec![b"AGGTAAA", b"ACAGGTAGGANAAGGAAAGT"];           
+        let seqs: Vec<&[u8]> = vec![b"AGGTAAA", b"ACAGGTAGGANAAGGAAAGT"];
         //..................................................^...................
 
         let (sbwt, _) = BitPackedKmerSortingMem::new_from_slices(&seqs, 4).run();
@@ -952,12 +968,61 @@ mod tests {
         let seqs: Vec<&[u8]> = vec![b"AGGTAAA", b"ACAGGTAGGAAAGGAAAGT"];
         let (sbwt_index, _) = BitPackedKmerSortingMem::new_from_slices(&seqs, 4).run();
         let ss = sbwt_index.sbwt().clone();
-        let sbwt_index2 = SbwtIndex::<SubsetMatrix>::from_subset_seq(ss, sbwt_index.n_sets(), sbwt_index.k(), sbwt_index.prefix_lookup_table.prefix_length);
+        let sbwt_index2 = SbwtIndex::<SubsetMatrix>::from_subset_seq(ss, sbwt_index.n_sets(), sbwt_index.k(), sbwt_index.prefix_lookup_table.prefix_length());
 
         let kmers1 = sbwt_index.reconstruct_padded_spectrum(3);
         let kmers2 = sbwt_index2.reconstruct_padded_spectrum(3);
         assert_eq!(kmers1, kmers2);
 
+    }
+
+    #[test]
+    fn from_subset_seq_with_kind() {
+        let seqs: Vec<&[u8]> = vec![b"AGGTAAA", b"ACAGGTAGGAAAGGAAAGT"];
+        let (sbwt_index, _) = BitPackedKmerSortingMem::new_from_slices(&seqs, 4).run();
+        for kind in PrefixTableKind::ALL {
+            let ss = sbwt_index.sbwt().clone();
+            let sbwt_index2 = SbwtIndex::<SubsetMatrix>::from_subset_seq_with_kind(ss, sbwt_index.n_kmers(), sbwt_index.k(), 3, kind);
+            assert_eq!(sbwt_index2.get_lookup_table().kind(), kind);
+            assert_eq!(sbwt_index2.get_lookup_table().prefix_length(), 3);
+        }
+    }
+
+    #[test]
+    fn prefix_table_kind_survives_serialization() {
+        let seqs: Vec<&[u8]> = vec![b"AGGTAAA", b"ACAGGTAGGAAAGGAAAGT"];
+        for kind in PrefixTableKind::ALL {
+            let (sbwt, _) = BitPackedKmerSortingMem::new_from_slices(&seqs, 4).precalc_length(3).prefix_table_kind(kind).run();
+            assert_eq!(sbwt.get_lookup_table().kind(), kind);
+
+            let mut buf = Vec::<u8>::new();
+            sbwt.serialize(&mut buf).unwrap();
+            let sbwt2 = SbwtIndex::<SubsetMatrix>::load(&mut buf.as_slice()).unwrap();
+
+            assert_eq!(sbwt2.get_lookup_table().kind(), kind);
+            assert_eq!(sbwt, sbwt2);
+        }
+    }
+
+    #[test]
+    fn prefix_table_kinds_give_same_ranges() {
+        let seqs: Vec<&[u8]> = vec![b"AGGTAAA", b"ACAGGTAGGAAAGGAAAGT"];
+        let (mut sbwt, _) = BitPackedKmerSortingMem::new_from_slices(&seqs, 4).run();
+        let p = 3;
+
+        let mut pmers = Vec::<Vec<u8>>::new();
+        for x in 0..(1_usize << (2 * p)) {
+            pmers.push((0..p).map(|i| DNA_ALPHABET[(x >> (2 * (p - 1 - i))) & 3]).collect());
+        }
+
+        for kind in PrefixTableKind::ALL {
+            sbwt.rebuild_lookup_table(kind, p);
+            assert_eq!(sbwt.get_lookup_table().kind(), kind);
+            for pmer in pmers.iter() {
+                let expected = sbwt.search_from(sbwt.interval_of_empty_string(), pmer).unwrap_or(0..0);
+                assert_eq!(sbwt.get_lookup_table().lookup(pmer), expected);
+            }
+        }
     }
 
     // https://stackoverflow.com/questions/52987181/how-can-i-convert-a-hex-string-to-a-u8-slice

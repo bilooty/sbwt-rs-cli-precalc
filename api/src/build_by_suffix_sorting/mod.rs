@@ -137,7 +137,7 @@ use simple_sds_sbwt::ops::{BitVec as BitVecTrait, Rank, Select};
 use simple_sds_sbwt::raw_vector::{AccessRaw, RawVector};
 use simple_sds_sbwt::serialize::Serialize;
 use simple_sds_sbwt::{bit_vector::BitVector, int_vector::IntVector};
-
+use crate::precalc::{PrefixLookupTable};
 type Word = wide::u8x16;
 const LANES: usize = Word::LANES as usize;
 type Bitmask = u16;
@@ -683,10 +683,10 @@ pub(crate) fn collect_output<SS: SubsetSeq + Send>(
         n_kmers,
         k,
         C,
-        crate::precalc::PrefixLookupTable::new_empty(n_sets)
+        PrefixLookupTable::new_empty(n_sets)
     );
     // TODO: add a parameter for prefix_length?
-    let prefix_lookup_table = crate::precalc::PrefixLookupTable::new(&index, 8);
+    let prefix_lookup_table = PrefixLookupTable::new(&index, 8);
     index.set_lookup_table(prefix_lookup_table);
     let lcs = lcs.map(LcsArray::new);
 
